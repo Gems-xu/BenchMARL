@@ -1,4 +1,13 @@
-
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+[project]
+name = "gemsmarl"
+version = "0.1.0"
+description = "My Reinforcement Learning Algorithm Library"
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+    "benchmarl>=1.5.0",
+    "moviepy>=2.2.1",
+    "torchrl>=0.8.1",
+    "vmas>=1.5.1",
+    "wandb>=0.22.3",
+]
