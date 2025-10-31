@@ -6,8 +6,8 @@
 
 from typing import Callable, Dict, List, Optional
 
-from benchmarl.environments.common import Task, TaskClass
-from benchmarl.utils import DEVICE_TYPING
+from gemsmarl.environments.common import Task, TaskClass
+from gemsmarl.utils import DEVICE_TYPING
 
 from tensordict import TensorDictBase
 

@@ -6,11 +6,11 @@
 
 import torch.nn
 
-from benchmarl.algorithms import MappoConfig
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.models.common import SequenceModelConfig
-from benchmarl.models.mlp import MlpConfig
+from gemsmarl.algorithms import MappoConfig
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.models.common import SequenceModelConfig
+from gemsmarl.models.mlp import MlpConfig
 
 
 if __name__ == "__main__":

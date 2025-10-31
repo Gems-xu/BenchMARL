@@ -8,17 +8,17 @@ import os
 from pathlib import Path
 from typing import List
 
-from benchmarl.eval_results import load_and_merge_json_dicts, Plotting
+from gemsmarl.eval_results import load_and_merge_json_dicts, Plotting
 
 from matplotlib import pyplot as plt
 
 
 def run_benchmark() -> List[str]:
-    from benchmarl.algorithms import MappoConfig, QmixConfig
-    from benchmarl.benchmark import Benchmark
-    from benchmarl.environments import VmasTask
-    from benchmarl.experiment import ExperimentConfig
-    from benchmarl.models.mlp import MlpConfig
+    from gemsmarl.algorithms import MappoConfig, QmixConfig
+    from gemsmarl.benchmark import Benchmark
+    from gemsmarl.environments import VmasTask
+    from gemsmarl.experiment import ExperimentConfig
+    from gemsmarl.models.mlp import MlpConfig
 
     # Configure experiment
     experiment_config = ExperimentConfig.get_from_yaml()

@@ -7,10 +7,10 @@
 import os
 from pathlib import Path
 
-from benchmarl.algorithms import MappoConfig
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.models.mlp import MlpConfig
+from gemsmarl.algorithms import MappoConfig
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.models.mlp import MlpConfig
 
 if __name__ == "__main__":
 

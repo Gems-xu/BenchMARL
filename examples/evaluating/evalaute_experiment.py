@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from benchmarl.hydra_config import reload_experiment_from_file
+from gemsmarl.hydra_config import reload_experiment_from_file
 
 if __name__ == "__main__":
 

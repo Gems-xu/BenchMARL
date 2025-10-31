@@ -5,10 +5,10 @@
 #
 
 
-from benchmarl.algorithms import EnsembleAlgorithmConfig, IsacConfig, MaddpgConfig
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.models import MlpConfig
+from gemsmarl.algorithms import EnsembleAlgorithmConfig, IsacConfig, MaddpgConfig
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.models import MlpConfig
 
 
 if __name__ == "__main__":

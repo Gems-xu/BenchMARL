@@ -4,10 +4,10 @@
 #  LICENSE file in the root directory of this source tree.
 #
 
-from benchmarl.algorithms.common import AlgorithmConfig
-from benchmarl.environments import Task
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.models.common import ModelConfig
+from gemsmarl.algorithms.common import AlgorithmConfig
+from gemsmarl.environments import Task
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.models.common import ModelConfig
 
 
 class ExperimentUtils:

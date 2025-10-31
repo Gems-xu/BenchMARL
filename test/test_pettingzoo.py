@@ -7,7 +7,7 @@
 
 import pytest
 
-from benchmarl.algorithms import (
+from gemsmarl.algorithms import (
     algorithm_config_registry,
     IddpgConfig,
     IppoConfig,
@@ -18,9 +18,9 @@ from benchmarl.algorithms import (
     MasacConfig,
     QmixConfig,
 )
-from benchmarl.algorithms.common import AlgorithmConfig
-from benchmarl.environments import PettingZooTask, Task
-from benchmarl.experiment import Experiment
+from gemsmarl.algorithms.common import AlgorithmConfig
+from gemsmarl.environments import PettingZooTask, Task
+from gemsmarl.experiment import Experiment
 
 from utils import _has_pettingzoo
 from utils_experiment import ExperimentUtils

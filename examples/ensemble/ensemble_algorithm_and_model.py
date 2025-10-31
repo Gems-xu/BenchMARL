@@ -5,10 +5,10 @@
 #
 
 
-from benchmarl.algorithms import EnsembleAlgorithmConfig, IppoConfig, MappoConfig
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.models import MlpConfig
+from gemsmarl.algorithms import EnsembleAlgorithmConfig, IppoConfig, MappoConfig
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.models import MlpConfig
 from models import DeepsetsConfig, EnsembleModelConfig, GnnConfig
 
 if __name__ == "__main__":

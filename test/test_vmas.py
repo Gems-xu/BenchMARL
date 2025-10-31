@@ -5,7 +5,7 @@
 #
 
 import pytest
-from benchmarl.algorithms import (
+from gemsmarl.algorithms import (
     algorithm_config_registry,
     IddpgConfig,
     IppoConfig,
@@ -15,10 +15,10 @@ from benchmarl.algorithms import (
     MasacConfig,
     QmixConfig,
 )
-from benchmarl.algorithms.common import AlgorithmConfig
-from benchmarl.environments import Task, VmasTask
-from benchmarl.experiment import Experiment
-from benchmarl.models import MlpConfig
+from gemsmarl.algorithms.common import AlgorithmConfig
+from gemsmarl.environments import Task, VmasTask
+from gemsmarl.experiment import Experiment
+from gemsmarl.models import MlpConfig
 from torch import nn
 from utils import _has_vmas
 from utils_experiment import ExperimentUtils

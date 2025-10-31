@@ -4,11 +4,11 @@
 #  LICENSE file in the root directory of this source tree.
 #
 
-from benchmarl.algorithms import MappoConfig, MasacConfig, QmixConfig
-from benchmarl.benchmark import Benchmark
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import ExperimentConfig
-from benchmarl.models.mlp import MlpConfig
+from gemsmarl.algorithms import MappoConfig, MasacConfig, QmixConfig
+from gemsmarl.benchmark import Benchmark
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import ExperimentConfig
+from gemsmarl.models.mlp import MlpConfig
 
 if __name__ == "__main__":
 

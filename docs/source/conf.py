@@ -2,7 +2,7 @@
 import os.path as osp
 import sys
 
-import benchmarl
+import gemsmarl
 import benchmarl_sphinx_theme
 
 # -- Project information
@@ -10,7 +10,7 @@ import benchmarl_sphinx_theme
 project = "BenchMARL"
 copyright = "Meta Platforms, Inc"
 author = "Matteo Bettini"
-version = benchmarl.__version__
+version = gemsmarl.__version__
 
 # -- General configuration
 sys.path.append(osp.join(osp.dirname(benchmarl_sphinx_theme.__file__), "extension"))
@@ -67,7 +67,7 @@ epub_show_urls = "footnote"
 
 def setup(app):
     def rst_jinja_render(app, _, source):
-        rst_context = {"benchmarl": benchmarl}
+        rst_context = {"benchmarl": gemsmarl}
         source[0] = app.builder.templates.render_string(source[0], rst_context)
 
     app.connect("source-read", rst_jinja_render)

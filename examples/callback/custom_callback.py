@@ -6,11 +6,11 @@
 
 from typing import List
 
-from benchmarl.algorithms import MappoConfig
-from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig
-from benchmarl.experiment.callback import Callback
-from benchmarl.models.mlp import MlpConfig
+from gemsmarl.algorithms import MappoConfig
+from gemsmarl.environments import VmasTask
+from gemsmarl.experiment import Experiment, ExperimentConfig
+from gemsmarl.experiment.callback import Callback
+from gemsmarl.models.mlp import MlpConfig
 from tensordict import TensorDict, TensorDictBase
 
 

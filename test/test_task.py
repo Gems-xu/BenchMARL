@@ -7,8 +7,8 @@
 import contextlib
 
 import pytest
-from benchmarl.environments import _task_class_registry, task_config_registry
-from benchmarl.hydra_config import load_task_config_from_hydra
+from gemsmarl.environments import _task_class_registry, task_config_registry
+from gemsmarl.hydra_config import load_task_config_from_hydra
 from hydra import compose, initialize
 
 

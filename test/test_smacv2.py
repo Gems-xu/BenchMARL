@@ -6,10 +6,10 @@
 
 import pytest
 
-from benchmarl.algorithms import algorithm_config_registry, MappoConfig, QmixConfig
-from benchmarl.algorithms.common import AlgorithmConfig
-from benchmarl.environments import Smacv2Task
-from benchmarl.experiment import Experiment
+from gemsmarl.algorithms import algorithm_config_registry, MappoConfig, QmixConfig
+from gemsmarl.algorithms.common import AlgorithmConfig
+from gemsmarl.environments import Smacv2Task
+from gemsmarl.experiment import Experiment
 
 from utils import _has_smacv2
 

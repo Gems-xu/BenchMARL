@@ -11,7 +11,7 @@ from typing import Type
 
 import torch
 
-from benchmarl.models.common import Model, ModelConfig
+from gemsmarl.models.common import Model, ModelConfig
 from tensordict import TensorDictBase
 from torch import nn
 from torchrl.modules import MLP, MultiAgentMLP

@@ -7,9 +7,9 @@ import importlib
 
 import pytest
 
-from benchmarl.experiment import ExperimentConfig
-from benchmarl.models import CnnConfig, GnnConfig, GruConfig, LstmConfig, MlpConfig
-from benchmarl.models.common import ModelConfig, SequenceModelConfig
+from gemsmarl.experiment import ExperimentConfig
+from gemsmarl.models import CnnConfig, GnnConfig, GruConfig, LstmConfig, MlpConfig
+from gemsmarl.models.common import ModelConfig, SequenceModelConfig
 from torch import nn
 
 _has_torch_geometric = importlib.util.find_spec("torch_geometric") is not None
