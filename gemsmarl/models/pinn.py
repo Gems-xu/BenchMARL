@@ -545,7 +545,7 @@ class PinnConfig(ModelConfig):
     num_feature_dims: int = 1
     
     # PINN specific
-    scenario_name: str = "grassland_vmas"
+    scenario_name: str = "navigation"  # vmas
     r_communication: float = 0.45
 
     @staticmethod
