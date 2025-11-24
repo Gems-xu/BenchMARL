@@ -191,15 +191,15 @@ class Att_R(nn.Module):
 
         batch = int(x.shape[0] / x.shape[2])
 
-        J11 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J22 = torch.zeros((batch, self.na, self.na), device=self.device)
         j12 = x.sum(1).sum(1).reshape(batch, self.na)
-        j21 = -torch.clone(j12)
-        J12 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J21 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J12[:, range(self.na), range(self.na)] = j12
-        J21[:, range(self.na), range(self.na)] = j21
-        J = torch.cat((torch.cat((J11, J21), dim=1), torch.cat((J12, J22), dim=1)), dim=2)
+        j21 = -j12
+        
+        # Optimized matrix construction using diag_embed
+        J12 = torch.diag_embed(j12)
+        J21 = torch.diag_embed(j21)
+        zeros = torch.zeros_like(J12)
+        
+        J = torch.cat((torch.cat((zeros, J21), dim=1), torch.cat((J12, zeros), dim=1)), dim=2)
 
         return torch.kron(J, torch.eye(2, device=self.device).unsqueeze(0))
 
@@ -242,11 +242,11 @@ class Att_J(nn.Module):
         x = self.mlp_in(x.reshape(-1, self.input_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bk_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bv_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(
             torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
@@ -254,11 +254,11 @@ class Att_J(nn.Module):
         x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bk_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bv_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(
             torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
@@ -267,15 +267,15 @@ class Att_J(nn.Module):
 
         batch = int(x.shape[0] / x.shape[2])
 
-        J11 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J22 = torch.zeros((batch, self.na, self.na), device=self.device)
         j12 = x.sum(1).sum(1).reshape(batch, self.na)
-        j21 = -torch.clone(j12)
-        J12 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J21 = torch.zeros((batch, self.na, self.na), device=self.device)
-        J12[:, range(self.na), range(self.na)] = j12
-        J21[:, range(self.na), range(self.na)] = j21
-        J = torch.cat((torch.cat((J11, J21), dim=1), torch.cat((J12, J22), dim=1)), dim=2)
+        j21 = -j12
+        
+        # Optimized matrix construction using diag_embed
+        J12 = torch.diag_embed(j12)
+        J21 = torch.diag_embed(j21)
+        zeros = torch.zeros_like(J12)
+        
+        J = torch.cat((torch.cat((zeros, J21), dim=1), torch.cat((J12, zeros), dim=1)), dim=2)
 
         return torch.kron(J, torch.eye(2, device=self.device).unsqueeze(0))
 
@@ -316,28 +316,28 @@ class Att_H(nn.Module):
         x = self.mlp_in(x).unsqueeze(dim=1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bk_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bk_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bv_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bv_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
 
         x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).unsqueeze(dim=1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bk_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bk_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bv_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bv_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
 
@@ -350,14 +350,12 @@ class Att_H(nn.Module):
         M21 = torch.kron((x[:, 10:15, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
         M22 = torch.kron((x[:, 15:20, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
         Mpp = (x[:, 20:25, :] ** 2).sum(1)
-        Mupper11 = torch.zeros([x.shape[0], l, l], device=self.device)
-        Mupper12 = torch.zeros([x.shape[0], l, l], device=self.device)
-        Mupper21 = torch.zeros([x.shape[0], l, l], device=self.device)
-        Mupper22 = torch.zeros([x.shape[0], l, l], device=self.device)
-        Mupper11[:, range(l), range(l)] = M11
-        Mupper12[:, range(l), range(l)] = M12
-        Mupper21[:, range(l), range(l)] = M21
-        Mupper22[:, range(l), range(l)] = M22
+        
+        # Optimized matrix construction using diag_embed
+        Mupper11 = torch.diag_embed(M11)
+        Mupper12 = torch.diag_embed(M12)
+        Mupper21 = torch.diag_embed(M21)
+        Mupper22 = torch.diag_embed(M22)
 
         M = torch.cat((torch.cat((Mupper11, Mupper21), dim=1), torch.cat((Mupper12, Mupper22), dim=1)), dim=2)
         q = x[:, :4, :]
@@ -415,34 +413,8 @@ class Pinn(Model):
                                  self.observation_dim_per_agent,
                                  self.n_agents,
                                  self.device).to(self.device)
-
-    def laplacian(self, q_agents):
-        Q1 = q_agents.repeat(1, self.n_agents, 1)
-        Q2 = torch.kron(q_agents.contiguous(), torch.ones((1, self.n_agents, 1), device=q_agents.device))
-        Q = (Q1 - Q2).norm(p=2, dim=2).reshape(q_agents.shape[0], self.n_agents, self.n_agents)
-        L = Q.le(self.r_communication).float()
-        L = L * torch.sigmoid(-(2.0) * (Q - self.r_communication))
-        return L
-
-    def _perform_checks(self):
-        super()._perform_checks()
-        if not self.input_has_agent_dim:
-             raise ValueError("PINN model requires input with agent dimension")
-
-    def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
-        # Gather in_key and flatten the last self.num_feature_dims dimensions
-        # Input shape: (batch, n_agents, obs_dim)
-        x = torch.cat(
-            [
-                torch.flatten(tensordict.get(in_key), start_dim=-self.num_feature_dims)
-                for in_key in self.in_keys
-            ],
-            dim=-1,
-        )
         
-        batch_size = x.shape[0]
-        
-        # Initialize system matrices
+        # Pre-compute system matrices
         self.F_sys_pinv = torch.cat((torch.zeros(self.action_dim_per_agent * self.n_agents,
                                                  self.action_dim_per_agent * self.n_agents,
                                                  device=self.device),
@@ -467,6 +439,37 @@ class Pinn(Model):
                                                        device=self.device),
                                 self.drag*torch.eye(self.action_dim_per_agent * self.n_agents, device=self.device)), dim=1)
                                 ), dim=0)
+
+    def laplacian(self, q_agents):
+        # Optimized pairwise distance calculation
+        Q = torch.cdist(q_agents, q_agents, p=2)
+        L = Q.le(self.r_communication).float()
+        L = L * torch.sigmoid(-(2.0) * (Q - self.r_communication))
+        return L
+
+    def _perform_checks(self):
+        super()._perform_checks()
+        if not self.input_has_agent_dim:
+             raise ValueError("PINN model requires input with agent dimension")
+
+    def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
+        # Gather in_key and flatten the last self.num_feature_dims dimensions
+        # Input shape: (batch, n_agents, obs_dim)
+        x = torch.cat(
+            [
+                torch.flatten(tensordict.get(in_key), start_dim=-self.num_feature_dims)
+                for in_key in self.in_keys
+            ],
+            dim=-1,
+        )
+        
+        batch_size = x.shape[0]
+        
+        # Use pre-computed system matrices
+        # Expand them to match batch size
+        F_sys_pinv = self.F_sys_pinv.unsqueeze(0).expand(batch_size, -1, -1)
+        J_sys = self.J_sys.unsqueeze(0).expand(batch_size, -1, -1)
+        R_sys = self.R_sys.unsqueeze(0).expand(batch_size, -1, -1)
 
         state = x
         state_h_mean = torch.clone(state).reshape(-1, self.observation_dim_per_agent)
@@ -504,9 +507,7 @@ class Pinn(Model):
         dx_mean = torch.bmm(J_mean.to(torch.float32) - R_mean.to(torch.float32), dHdx_mean.unsqueeze(2)).squeeze(2)
 
         # Controller dynamics
-        F_sys_pinv = self.F_sys_pinv.unsqueeze(dim=0).repeat(batch_size, 1, 1)
-        R_sys = self.R_sys.unsqueeze(dim=0).repeat(batch_size, 1, 1)
-        J_sys = self.J_sys.unsqueeze(dim=0).repeat(batch_size, 1, 1)
+        # F_sys_pinv, R_sys, J_sys are already expanded above
 
         dHdx_sys_mean = torch.cat((torch.zeros(dx_mean.shape[0], int(dx_mean.shape[1]/2), device=self.device).unsqueeze(dim=2),
                                    dx_mean[:, :self.action_dim_per_agent * self.n_agents].unsqueeze(dim=2)), dim=1)
