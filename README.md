@@ -3,7 +3,7 @@
 
 # BenchMARL
 [![tests](https://github.com/facebookresearch/BenchMARL/actions/workflows/unit_tests.yml/badge.svg)](test)
-[![Documentation Status](https://readthedocs.org/projects/benchmarl/badge/?version=latest)](https://benchmarl.readthedocs.io/en/latest/?badge=latest)
+[![Documentation Status](https://readthedocs.org/projects/gemsmarl/badge/?version=latest)](https://benchmarl.readthedocs.io/en/latest/?badge=latest)
 [![Python](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11-blue.svg)](https://www.python.org/downloads/)
 <a href="https://pypi.org/project/benchmarl"><img src="https://img.shields.io/pypi/v/benchmarl" alt="pypi version"></a>
 [![Downloads](https://static.pepy.tech/personalized-badge/benchmarl?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Downloads)](https://pepy.tech/project/benchmarl)
@@ -11,7 +11,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2312.01472-b31b1b.svg)](https://arxiv.org/abs/2312.01472)
 
 ```bash
-python benchmarl/run.py algorithm=mappo task=vmas/balance
+uv run gemsmarl/run.py algorithm=mappo task=vmas/balance
 ```
 
 
@@ -85,7 +85,7 @@ the domain and want to easily take a picture of the landscape.
 You can install TorchRL from PyPi.
 
 ```bash
-pip install torchrl
+uv add torchrl
 ```
 For more details, or for installing nightly versions, see the
 [TorchRL installation guide](https://github.com/pytorch/rl#installation).
@@ -93,12 +93,13 @@ For more details, or for installing nightly versions, see the
 #### Install BenchMARL
 You can just install it from github
 ```bash
-pip install benchmarl
+uv add gemsmarl
 ```
 Or also clone it locally to access the configs and scripts
 ```bash
 git clone https://github.com/facebookresearch/BenchMARL.git
-pip install -e BenchMARL
+cd BenchMARL
+uv sync
 ```
 #### Install environments
 
@@ -107,23 +108,29 @@ All enviornment dependencies are optional in BenchMARL and can be installed sepa
 ##### VMAS
 
 ```bash
-pip install vmas
+uv add vmas
+# Or install with extras
+uv sync --extra vmas
 ```
 
 ##### PettingZoo
 ```bash
-pip install "pettingzoo[all]"
+uv add "pettingzoo[all]"
+# Or install with extras
+uv sync --extra pettingzoo
 ```
 
 ##### MeltingPot
 ```bash
-pip install dm-meltingpot
+uv add dm-meltingpot
+# Or install with extras
+uv sync --extra meltingpot
 ```
 
 ##### MAgent2
 
 ```bash
-pip install git+https://github.com/Farama-Foundation/MAgent2
+uv add git+https://github.com/Farama-Foundation/MAgent2
 ```
 
 ##### SMACv2
@@ -134,7 +141,7 @@ Follow the instructions on the environment [repository](https://github.com/oxwhi
 
 ### Run
 
-Experiments are launched with a [default configuration](benchmarl/conf) that 
+Experiments are launched with a [default configuration](gemsmarl/conf) that 
 can be overridden in many ways. 
 To learn how to customize and override configurations
 please refer to the [configuring section](#configuring).
@@ -144,14 +151,14 @@ please refer to the [configuring section](#configuring).
 To launch an experiment from the command line you can do
 
 ```bash
-python benchmarl/run.py algorithm=mappo task=vmas/balance
+uv run gemsmarl/run.py algorithm=mappo task=vmas/balance
 ```
 [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/running/run_experiment.sh)
 
 
 Thanks to [hydra](https://hydra.cc/docs/intro/), you can run benchmarks as multi-runs like:
 ```bash
-python benchmarl/run.py -m algorithm=mappo,qmix,masac task=vmas/balance,vmas/sampling seed=0,1
+uv run gemsmarl/run.py -m algorithm=mappo,qmix,masac task=vmas/balance,vmas/sampling seed=0,1
 ```
 [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/running/run_benchmark.sh)
 
@@ -208,7 +215,7 @@ any comparison they want across our algorithms and tasks in just one line of cod
 To achieve this, BenchMARL interconnects components from [TorchRL](https://github.com/pytorch/rl), 
 which provides an efficient and reliable backend.
 
-The library has a [default configuration](benchmarl/conf) for each of its components.
+The library has a [default configuration](gemsmarl/conf) for each of its components.
 While parts of this configuration are supposed to be changed (for example experiment configurations),
 other parts (such as tasks) should not be changed to allow for reproducibility.
 To aid in this, each version of BenchMARL is paired to a default configuration.
@@ -217,7 +224,7 @@ Let's now introduce each component in the library.
 
 **Experiment**. An experiment is a training run in which an algorithm, a task, and a model are fixed.
 Experiments are configured by passing these values alongside a seed and the experiment hyperparameters.
-The experiment [hyperparameters](benchmarl/conf/experiment/base_experiment.yaml) cover both 
+The experiment [hyperparameters](gemsmarl/conf/experiment/base_experiment.yaml) cover both 
 on-policy and off-policy algorithms, discrete and continuous actions, and probabilistic and deterministic policies
 (as they are agnostic of the algorithm or task used).
 An experiment can be launched from the command line or from a script. 
@@ -237,9 +244,9 @@ determine the training strategy. Here is a table with the currently implemented 
 | [MAPPO](https://arxiv.org/abs/2103.01955)                                                                                                   | On            | Yes          | Yes                          | Continuous + Discrete | Yes                 |   
 | [IPPO](https://arxiv.org/abs/2011.09533)                                                                                                    | On            | Yes          | No                           | Continuous + Discrete | Yes                 |  
 | [MADDPG](https://arxiv.org/abs/1706.02275)                                                                                                  | Off           | Yes          | Yes                          | Continuous            | No                  | 
-| [IDDPG](benchmarl/algorithms/iddpg.py)                                                                                                      | Off           | Yes          | No                           | Continuous            | No                  |   
-| [MASAC](benchmarl/algorithms/masac.py)                                                                                                      | Off           | Yes          | Yes                          | Continuous + Discrete | Yes                 |   
-| [ISAC](benchmarl/algorithms/isac.py)                                                                                                        | Off           | Yes          | No                           | Continuous + Discrete | Yes                 |   
+| [IDDPG](gemsmarl/algorithms/iddpg.py)                                                                                                      | Off           | Yes          | No                           | Continuous            | No                  |   
+| [MASAC](gemsmarl/algorithms/masac.py)                                                                                                      | Off           | Yes          | Yes                          | Continuous + Discrete | Yes                 |   
+| [ISAC](gemsmarl/algorithms/isac.py)                                                                                                        | Off           | Yes          | No                           | Continuous + Discrete | Yes                 |   
 | [QMIX](https://arxiv.org/abs/1803.11485)                                                                                                    | Off           | No           | NA                           | Discrete              | No                  | 
 | [VDN](https://arxiv.org/abs/1706.05296)                                                                                                     | Off           | No           | NA                           | Discrete              | No                  |  
 | [IQL](https://www.semanticscholar.org/paper/Multi-Agent-Reinforcement-Learning%3A-Independent-Tan/59de874c1e547399b695337bcff23070664fa66e) | Off           | No           | NA                           | Discrete              | No                  |  
@@ -251,12 +258,12 @@ They differ based on many aspects, here is a table with the current environments
 
 | Environment                                                         | Tasks                                | Cooperation               | Global state | Reward function               | Action space          |    Vectorized    |
 |---------------------------------------------------------------------|--------------------------------------|---------------------------|--------------|-------------------------------|-----------------------|:----------------:|
-| [VMAS](https://github.com/proroklab/VectorizedMultiAgentSimulator)  | [27](benchmarl/conf/task/vmas)       | Cooperative + Competitive | No           | Shared + Independent + Global | Continuous + Discrete |       Yes        |    
-| [SMACv2](https://github.com/oxwhirl/smacv2)                         | [15](benchmarl/conf/task/smacv2)     | Cooperative               | Yes          | Global                        | Discrete              |        No        |
-| [MPE](https://github.com/openai/multiagent-particle-envs)           | [8](benchmarl/conf/task/pettingzoo)  | Cooperative + Competitive | Yes          | Shared + Independent          | Continuous + Discrete |        No        |
-| [SISL](https://github.com/sisl/MADRL)                               | [2](benchmarl/conf/task/pettingzoo)  | Cooperative               | No           | Shared                        | Continuous            |        No        |
-| [MeltingPot](https://github.com/google-deepmind/meltingpot)         | [49](benchmarl/conf/task/meltingpot) | Cooperative + Competitive | Yes          | Independent                   | Discrete              |        No        |
-| [MAgent2](https://github.com/Farama-Foundation/magent2)             | [1](benchmarl/conf/task/magent)      | Cooperative + Competitive | Yes          | Global in groups              | Discrete              |        No        |
+| [VMAS](https://github.com/proroklab/VectorizedMultiAgentSimulator)  | [27](gemsmarl/conf/task/vmas)       | Cooperative + Competitive | No           | Shared + Independent + Global | Continuous + Discrete |       Yes        |    
+| [SMACv2](https://github.com/oxwhirl/smacv2)                         | [15](gemsmarl/conf/task/smacv2)     | Cooperative               | Yes          | Global                        | Discrete              |        No        |
+| [MPE](https://github.com/openai/multiagent-particle-envs)           | [8](gemsmarl/conf/task/pettingzoo)  | Cooperative + Competitive | Yes          | Shared + Independent          | Continuous + Discrete |        No        |
+| [SISL](https://github.com/sisl/MADRL)                               | [2](gemsmarl/conf/task/pettingzoo)  | Cooperative               | No           | Shared                        | Continuous            |        No        |
+| [MeltingPot](https://github.com/google-deepmind/meltingpot)         | [49](gemsmarl/conf/task/meltingpot) | Cooperative + Competitive | Yes          | Independent                   | Discrete              |        No        |
+| [MAgent2](https://github.com/Farama-Foundation/magent2)             | [1](gemsmarl/conf/task/magent)      | Cooperative + Competitive | Yes          | Global in groups              | Discrete              |        No        |
 
 
 > [!NOTE]  
@@ -272,12 +279,12 @@ agent group. Here is a table of the models implemented in BenchMARL
 
 | Name                                     | Decentralized | Centralized with local inputs | Centralized with global input | 
 |------------------------------------------|:-------------:|:-----------------------------:|:-----------------------------:|
-| [MLP](benchmarl/models/mlp.py)           |      Yes      |              Yes              |              Yes              |
-| [GRU](benchmarl/models/gru.py)           |      Yes      |              Yes              |              Yes              |
-| [LSTM](benchmarl/models/lstm.py)         |      Yes      |              Yes              |              Yes              |
-| [GNN](benchmarl/models/gnn.py)           |      Yes      |              Yes              |              No               |
-| [CNN](benchmarl/models/cnn.py)           |      Yes      |              Yes              |              Yes              |
-| [Deepsets](benchmarl/models/deepsets.py) |      Yes      |              Yes              |              Yes              |
+| [MLP](gemsmarl/models/mlp.py)           |      Yes      |              Yes              |              Yes              |
+| [GRU](gemsmarl/models/gru.py)           |      Yes      |              Yes              |              Yes              |
+| [LSTM](gemsmarl/models/lstm.py)         |      Yes      |              Yes              |              Yes              |
+| [GNN](gemsmarl/models/gnn.py)           |      Yes      |              Yes              |              No               |
+| [CNN](gemsmarl/models/cnn.py)           |      Yes      |              Yes              |              Yes              |
+| [Deepsets](gemsmarl/models/deepsets.py) |      Yes      |              Yes              |              Yes              |
 
 
 ## Fine-tuned public benchmarks
@@ -306,9 +313,9 @@ In the following, we report a table of the results:
 ## Reporting and plotting
 
 Reporting and plotting is compatible with [marl-eval](https://github.com/instadeepai/marl-eval). 
-If `experiment.create_json=True` (this is the default in the [experiment config](benchmarl/conf/experiment/base_experiment.yaml))
+If `experiment.create_json=True` (this is the default in the [experiment config](gemsmarl/conf/experiment/base_experiment.yaml))
 a file named `{experiment_name}.json` will be created in the experiment output folder with the format of [marl-eval](https://github.com/instadeepai/marl-eval).
-You can load and merge these files using the utils in [eval_results](benchmarl/eval_results.py) to create beautiful plots of 
+You can load and merge these files using the utils in [eval_results](gemsmarl/eval_results.py) to create beautiful plots of 
 your benchmarks.  No more struggling with matplotlib and latex!
 
 [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/plotting)
@@ -323,7 +330,7 @@ One of the core tenets of BenchMARL is allowing users to leverage the existing a
 and tasks implementations to benchmark their newly proposed solution.
 
 For this reason we expose standard interfaces with simple abstract methods
-for [algorithms](benchmarl/algorithms/common.py), [tasks](benchmarl/environments/common.py) and [models](benchmarl/models/common.py).
+for [algorithms](gemsmarl/algorithms/common.py), [tasks](gemsmarl/environments/common.py) and [models](gemsmarl/models/common.py).
 To introduce your solution in the library, you just need to implement the abstract methods
 exposed by these base classes which use objects from the [TorchRL](https://github.com/pytorch/rl) library.
 
@@ -341,7 +348,7 @@ We suggest to read the hydra documentation
 to get familiar with all its functionalities. 
 
 Each component in the project has a corresponding yaml configuration in the BenchMARL 
-[conf tree](benchmarl/conf). 
+[conf tree](gemsmarl/conf). 
 Components' configurations are loaded from these files into python dataclasses that act 
 as schemas for validation of parameter names and types. That way we keep the best of 
 both words: separation of all configuration from code and strong typing for validation! 
@@ -350,17 +357,17 @@ You can also directly load and validate configuration yaml files without using h
 
 ### Experiment
 
-Experiment configurations are in [`benchmarl/conf/config.yaml`](benchmarl/conf/config.yaml).
+Experiment configurations are in [`gemsmarl/conf/config.yaml`](gemsmarl/conf/config.yaml).
 Running custom experiments is extremely simplified by the [Hydra](https://hydra.cc/) configurations.
-The default configuration for the library is contained in the [`benchmarl/conf`](benchmarl/conf) folder.
+The default configuration for the library is contained in the [`gemsmarl/conf`](gemsmarl/conf) folder.
 
 When running an experiment you can override its hyperparameters like so
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo experiment.lr=0.03 experiment.evaluation=true experiment.train_device="cpu"
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo experiment.lr=0.03 experiment.evaluation=true experiment.train_device="cpu"
 ```
 
-Experiment hyperparameters are loaded from [`benchmarl/conf/experiment/base_experiment.yaml`](benchmarl/conf/experiment/base_experiment.yaml)
-into a dataclass [`ExperimentConfig`](benchmarl/experiment/experiment.py) defining their domain.
+Experiment hyperparameters are loaded from [`gemsmarl/conf/experiment/base_experiment.yaml`](gemsmarl/conf/experiment/base_experiment.yaml)
+into a dataclass [`ExperimentConfig`](gemsmarl/experiment/experiment.py) defining their domain.
 This makes it so that all and only the parameters expected are loaded with the right types.
 You can also directly load them from a script by calling `ExperimentConfig.get_from_yaml()`.
 
@@ -373,11 +380,11 @@ a script [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/co
 You can override an algorithm configuration when launching BenchMARL.
 
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=masac algorithm.num_qvalue_nets=3 algorithm.target_entropy=auto algorithm.share_param_critic=true
+uv run gemsmarl/run.py task=vmas/balance algorithm=masac algorithm.num_qvalue_nets=3 algorithm.target_entropy=auto algorithm.share_param_critic=true
 ```
 
-Available algorithms and their default configs can be found at [`benchmarl/conf/algorithm`](benchmarl/conf/algorithm).
-They are loaded into a dataclass [`AlgorithmConfig`](benchmarl/algorithms/common.py), present for each algorithm, defining their domain.
+Available algorithms and their default configs can be found at [`gemsmarl/conf/algorithm`](gemsmarl/conf/algorithm).
+They are loaded into a dataclass [`AlgorithmConfig`](gemsmarl/algorithms/common.py), present for each algorithm, defining their domain.
 This makes it so that all and only the parameters expected are loaded with the right types.
 You can also directly load them from a script by calling `YourAlgorithmConfig.get_from_yaml()`.
 
@@ -392,11 +399,11 @@ You can override a task configuration when launching BenchMARL.
 However this is not recommended for benchmarking as tasks should have fixed version and parameters for reproducibility.
 
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo task.n_agents=4
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo task.n_agents=4
 ```
 
-Available tasks and their default configs can be found at [`benchmarl/conf/task`](benchmarl/conf/task).
-They are loaded into a dataclass [`TaskConfig`](benchmarl/environments/common.py), defining their domain.
+Available tasks and their default configs can be found at [`gemsmarl/conf/task`](gemsmarl/conf/task).
+They are loaded into a dataclass [`TaskConfig`](gemsmarl/environments/common.py), defining their domain.
 Tasks are enumerations under the environment name. For example, `VmasTask.NAVIGATION` represents the navigation task in the
 VMAS simulator. This allows autocompletion and seeing all available tasks at once.
 You can also directly load them from a script by calling `YourEnvTask.TASK_NAME.get_from_yaml()`.
@@ -412,11 +419,11 @@ By default an MLP model will be loaded with the default config.
 You can change it like so:
 
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo model=layers/mlp model=layers/mlp model.layer_class="torch.nn.Linear" "model.num_cells=[32,32]" model.activation_class="torch.nn.ReLU"
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo model=layers/mlp model=layers/mlp model.layer_class="torch.nn.Linear" "model.num_cells=[32,32]" model.activation_class="torch.nn.ReLU"
 ```
 
-Available models and their configs can be found at [`benchmarl/conf/model/layers`](benchmarl/conf/model/layers).
-They are loaded into a dataclass [`ModelConfig`](benchmarl/models/common.py), defining their domain.
+Available models and their configs can be found at [`gemsmarl/conf/model/layers`](gemsmarl/conf/model/layers).
+They are loaded into a dataclass [`ModelConfig`](gemsmarl/models/common.py), defining their domain.
 You can also directly load them from a script by calling `YourModelConfig.get_from_yaml()`.
 
 Here is an example of overriding model hyperparameters from hydra 
@@ -425,10 +432,10 @@ a script [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/co
 
 #### Sequence model
 You can compose layers into a sequence model.
-Available layer names are in the [`benchmarl/conf/model/layers`](benchmarl/conf/model/layers) folder.
+Available layer names are in the [`gemsmarl/conf/model/layers`](gemsmarl/conf/model/layers) folder.
 
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo model=sequence "model.intermediate_sizes=[256]" "model/layers@model.layers.l1=mlp" "model/layers@model.layers.l2=mlp" "+model/layers@model.layers.l3=mlp" "model.layers.l3.num_cells=[3]"
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo model=sequence "model.intermediate_sizes=[256]" "model/layers@model.layers.l1=mlp" "model/layers@model.layers.l2=mlp" "+model/layers@model.layers.l3=mlp" "model.layers.l3.num_cells=[3]"
 ```
 Add a layer with `"+model/layers@model.layers.l3=mlp"`.
 
@@ -451,11 +458,11 @@ BenchMARL has several features:
 ### Logging
 
 BenchMARL is compatible with the [TorchRL loggers](https://github.com/pytorch/rl/tree/main/torchrl/record/loggers).
-A list of logger names can be provided in the [experiment config])(benchmarl/conf/experiment/base_experiment.yaml.
+A list of logger names can be provided in the [experiment config])(gemsmarl/conf/experiment/base_experiment.yaml.
 Example of available options are: `wandb`, `csv`, `mflow`, `tensorboard` or any other option available in TorchRL. You can specify the loggers
 in the yaml config files or in the script arguments like so:
 ```bash
-python benchmarl/run.py algorithm=mappo task=vmas/balance "experiment.loggers=[wandb]"
+uv run gemsmarl/run.py algorithm=mappo task=vmas/balance "experiment.loggers=[wandb]"
 ```
 The wandb logger is fully compatible with experiment restoring and will automatically resume the run of 
 the loaded experiment.
@@ -470,12 +477,12 @@ where the script is launched.
 The output folder will contain a folder for each experiment with the corresponding experiment name.
 Their checkpoints will be stored in a `"checkpoints"` folder within the experiment folder.
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo experiment.max_n_iters=3 experiment.on_policy_collected_frames_per_batch=100 experiment.checkpoint_interval=100
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo experiment.max_n_iters=3 experiment.on_policy_collected_frames_per_batch=100 experiment.checkpoint_interval=100
 ```
 
 To load from a checkpoint, pass the absolute checkpoint file name to `experiment.restore_file`.
 ```bash
-python benchmarl/run.py task=vmas/balance algorithm=mappo experiment.max_n_iters=6 experiment.on_policy_collected_frames_per_batch=100 experiment.restore_file="/hydra/experiment/folder/checkpoint/checkpoint_300.pt"
+uv run gemsmarl/run.py task=vmas/balance algorithm=mappo experiment.max_n_iters=6 experiment.on_policy_collected_frames_per_batch=100 experiment.restore_file="/hydra/experiment/folder/checkpoint/checkpoint_300.pt"
 ```
 Here is a python example when modifying the config
 [![Example](https://img.shields.io/badge/Example-blue.svg)](examples/checkpointing/reload_experiment.py)
@@ -484,15 +491,15 @@ and one keeping the same config
 
 There are also ways to **resume** and **evaluate** hydra experiments directly from the file
 ```bash
-python benchmarl/evaluate.py ../outputs/2024-09-09/20-39-31/mappo_balance_mlp__cd977b69_24_09_09-20_39_31/checkpoints/checkpoint_100.pt
+uv run gemsmarl/evaluate.py ../outputs/2024-09-09/20-39-31/mappo_balance_mlp__cd977b69_24_09_09-20_39_31/checkpoints/checkpoint_100.pt
 ```
 ```bash
-python benchmarl/resume.py ../outputs/2024-09-09/20-39-31/mappo_balance_mlp__cd977b69_24_09_09-20_39_31/checkpoints/checkpoint_100.pt
+uv run gemsmarl/resume.py ../outputs/2024-09-09/20-39-31/mappo_balance_mlp__cd977b69_24_09_09-20_39_31/checkpoints/checkpoint_100.pt
 ```
 
 ### Callbacks
 
-Experiments optionally take a list of [`Callback`](benchmarl/experiment/callback.py) which have several methods
+Experiments optionally take a list of [`Callback`](gemsmarl/experiment/callback.py) which have several methods
 that you can implement to see what's going on during training such 
 as `on_batch_collected`, `on_train_end`, and `on_evaluation_end`.
 
