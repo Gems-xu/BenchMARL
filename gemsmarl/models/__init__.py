@@ -17,10 +17,13 @@ from .gnn import Gnn, GnnConfig
 from .gru import Gru, GruConfig
 from .lstm import Lstm, LstmConfig
 from .mlp import Mlp, MlpConfig
+from .pinn import Pinn, PinnConfig
 
 classes = [
     "Mlp",
     "MlpConfig",
+    "Pinn",
+    "PinnConfig",
     "Gnn",
     "GnnConfig",
     "Cnn",
@@ -35,6 +38,7 @@ classes = [
 
 model_config_registry = {
     "mlp": MlpConfig,
+    "pinn": PinnConfig,
     "gnn": GnnConfig,
     "cnn": CnnConfig,
     "deepsets": DeepsetsConfig,
