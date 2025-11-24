@@ -39,8 +39,8 @@ critic_model_config = MlpConfig(
 # 4. 配置实验
 experiment_config = ExperimentConfig.get_from_yaml()
 experiment_config.evaluation = True
-experiment_config.train_device = "cuda:0"
-experiment_config.sampling_device = "cuda:0"
+experiment_config.train_device = "cuda:1"
+experiment_config.sampling_device = "cuda:1"
 experiment_config.save_folder = "outputs"
 experiment_config.checkpoint_at_end = True
 experiment_config.checkpoint_interval = 60000  # Save every 10 iterations (6000 * 10)

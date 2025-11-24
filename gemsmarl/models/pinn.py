@@ -100,28 +100,28 @@ class Attention_LEMURS(nn.Module):
         x = self.mlp_in(x.reshape(-1, self.input_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bk_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bk_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bv_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bv_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
 
         x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bk_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bk_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2))
-            + self.Bv_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2))
+            + self.Bv_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
 
@@ -166,11 +166,11 @@ class Att_R(nn.Module):
         x = self.mlp_in(x.reshape(-1, self.input_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bq_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bk_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bv_4.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(
             torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
@@ -178,11 +178,11 @@ class Att_R(nn.Module):
         x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).reshape(x.shape[0], self.na, -1)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bq_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Aq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
         K = self.activation_swish(
-            torch.bmm(self.Ak_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bk_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1)).transpose(1, 2)
+            torch.bmm(self.Ak_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1), x.transpose(1, 2)) + self.Bv_7.unsqueeze(dim=0).repeat(x.shape[0], 1, 1))
+            torch.bmm(self.Av_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
 
         x = self.activation_swish(
             torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
@@ -494,7 +494,8 @@ class Pinn(Model):
         with torch.enable_grad():
             state_h_mean = Variable(state_h_mean.data, requires_grad=True)
             H_mean = self.H_mean.forward(state_h_mean.to(torch.float32), self.n_agents)
-            Hgrad_mean = torch.autograd.grad(H_mean.sum(), state_h_mean, only_inputs=True, create_graph=True)
+            # Only create graph if we are training to save memory and computation during sampling/eval
+            Hgrad_mean = torch.autograd.grad(H_mean.sum(), state_h_mean, only_inputs=True, create_graph=self.training)
             dH_mean = Hgrad_mean[0]
             
         dHq_mean = dH_mean[:, :self.action_dim_per_agent].reshape(-1,
