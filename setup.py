@@ -20,7 +20,7 @@ def package_files(directory):
 
 def get_version():
     """Gets the benchmarl version."""
-    path = CWD / "benchmarl" / "__init__.py"
+    path = CWD / "gemsmarl" / "__init__.py"
     content = path.read_text()
 
     for line in content.splitlines():
@@ -34,13 +34,13 @@ CWD = pathlib.Path(__file__).absolute().parent
 extra_files = package_files(
     str(
         Path(os.path.dirname(os.path.realpath(__file__)))
-        / Path("benchmarl")
+        / Path("gemsmarl")
         / Path("conf")
     )
 )
 
 setup(
-    name="benchmarl",
+    name="gemsmarl",
     version=get_version(),
     description="BenchMARL",
     url="https://github.com/facebookresearch/BenchMARL",
