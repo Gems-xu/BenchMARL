@@ -4,6 +4,7 @@
 #  LICENSE file in the root directory of this source tree.
 #
 import copy
+import importlib
 from typing import Callable, Dict, List, Optional
 
 from torchrl.data import Composite
@@ -12,6 +13,26 @@ from torchrl.envs.libs.vmas import VmasEnv
 
 from gemsmarl.environments.common import Task, TaskClass
 from gemsmarl.utils import DEVICE_TYPING
+
+
+# 自定义场景映射：场景名 -> 场景类
+# 这些场景不在 VMAS 内置场景中，需要从本地模块加载
+CUSTOM_SCENARIOS = {
+    "navigation_obs": "gemsmarl.environments.vmas.scenarios.navigation_obs.NavigationObsScenario",
+}
+
+
+def _get_scenario(name: str):
+    """
+    获取场景实例或场景名称。
+    如果是自定义场景，返回场景类的实例；否则返回场景名称字符串（由 VMAS 内部处理）。
+    """
+    if name in CUSTOM_SCENARIOS:
+        module_path, class_name = CUSTOM_SCENARIOS[name].rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        scenario_class = getattr(module, class_name)
+        return scenario_class()  # 返回实例
+    return name
 
 
 class VmasClass(TaskClass):
@@ -23,8 +44,9 @@ class VmasClass(TaskClass):
         device: DEVICE_TYPING,
     ) -> Callable[[], EnvBase]:
         config = copy.deepcopy(self.config)
+        scenario = _get_scenario(self.name.lower())
         return lambda: VmasEnv(
-            scenario=self.name.lower(),
+            scenario=scenario,
             num_envs=num_envs,
             continuous_actions=continuous_actions,
             seed=seed,
@@ -88,6 +110,7 @@ class VmasTask(Task):
     BALANCE = None
     SAMPLING = None
     NAVIGATION = None
+    NAVIGATION_OBS = None  # Custom navigation with obstacles
     TRANSPORT = None
     REVERSE_TRANSPORT = None
     WHEEL = None
