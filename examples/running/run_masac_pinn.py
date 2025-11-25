@@ -39,11 +39,20 @@ critic_model_config = MlpConfig(
 # 4. 配置实验
 experiment_config = ExperimentConfig.get_from_yaml()
 experiment_config.evaluation = True
-experiment_config.train_device = "cuda:1"
-experiment_config.sampling_device = "cuda:1"
+
+# 速度优化配置
+experiment_config.train_device = "cuda:2"      # 训练放 GPU，加速反向传播
+experiment_config.sampling_device = "cuda:2"   # 采样设备（如环境支持 GPU）
+experiment_config.buffer_device = "cuda:2"        # 缓冲区放 CPU，节省 GPU 显存
+
+# 提高并行度和批次大小
+experiment_config.off_policy_n_envs_per_worker = 20   # 增加并行环境数
+experiment_config.off_policy_train_batch_size = 256   # 增大批次，提高 GPU 利用率
+experiment_config.off_policy_n_optimizer_steps = 500  # 减少优化步数（如果采样是瓶颈）
+
 experiment_config.save_folder = "outputs"
-experiment_config.checkpoint_at_end = True
-experiment_config.checkpoint_interval = 60000  # Save every 10 iterations (6000 * 10)
+# experiment_config.checkpoint_at_end = True
+# experiment_config.checkpoint_interval = 60000  # Save every 10 iterations (6000 * 10)
 experiment_config.render = True  # Enable video rendering during evaluation
 
 # 5. 创建实验
