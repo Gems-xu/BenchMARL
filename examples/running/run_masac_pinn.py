@@ -55,6 +55,9 @@ experiment_config.save_folder = "outputs"
 # experiment_config.checkpoint_interval = 60000  # Save every 10 iterations (6000 * 10)
 experiment_config.render = True  # Enable video rendering during evaluation
 
+# 仅使用 wandb logger，视频只会同步到 WandB，不会保存到本地
+experiment_config.loggers = ["wandb"]
+
 # 5. 创建实验
 experiment = Experiment(
     algorithm_config=algorithm_config,
