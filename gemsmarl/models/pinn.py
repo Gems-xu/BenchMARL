@@ -553,6 +553,12 @@ class Pinn(Model):
         # We will output u_log_std as the second part. Masac will transform it to positive scale.
         
         res = torch.cat([u_mean, u_log_std], dim=-1)
+        
+        # Clamp output to prevent NaN propagation during training
+        res = torch.clamp(res, min=-10.0, max=10.0)
+        
+        # Replace any NaN values with zeros for stability
+        res = torch.nan_to_num(res, nan=0.0, posinf=10.0, neginf=-10.0)
 
         tensordict.set(self.out_key, res)
         return tensordict

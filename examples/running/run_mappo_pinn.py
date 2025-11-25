@@ -11,8 +11,14 @@ from gemsmarl.environments import VmasTask
 from gemsmarl.experiment import Experiment, ExperimentConfig
 from gemsmarl.models import MlpConfig, PinnConfig
 
+# 设置随机种子以确保可重复性
+# torch.manual_seed(0)
+
 # 1. 配置算法 (MAPPO)
 algorithm_config = MappoConfig.get_from_yaml()
+
+# 可选：调整 scale_mapping 以获得更稳定的初始值
+# algorithm_config.scale_mapping = "exp"  # 备选方案
 
 # 定义场景名称，用于自动选择任务和配置 PINN
 scenario_name = "navigation"
@@ -51,6 +57,13 @@ experiment_config.on_policy_n_envs_per_worker = 40     # 增加并行环境数
 experiment_config.on_policy_collected_frames_per_batch = 6000  # 每批收集的帧数
 experiment_config.on_policy_n_minibatch_iters = 45     # minibatch 迭代次数
 experiment_config.on_policy_minibatch_size = 400       # minibatch 大小
+
+# 数值稳定性配置 - PINN 模型可能产生较大梯度，需要更严格的裁剪
+experiment_config.clip_grad_norm = True
+experiment_config.clip_grad_val = 1.0  # 更严格的梯度裁剪（默认是5.0）
+
+# 降低学习率以提高稳定性
+experiment_config.lr = 3e-5  # 默认是 5e-5
 
 experiment_config.save_folder = "outputs"
 # experiment_config.checkpoint_at_end = True
