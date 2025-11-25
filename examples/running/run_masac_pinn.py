@@ -41,13 +41,13 @@ experiment_config = ExperimentConfig.get_from_yaml()
 experiment_config.evaluation = True
 
 # 速度优化配置
-experiment_config.train_device = "cuda:2"      # 训练放 GPU，加速反向传播
-experiment_config.sampling_device = "cuda:2"   # 采样设备（如环境支持 GPU）
-experiment_config.buffer_device = "cuda:2"        # 缓冲区放 CPU，节省 GPU 显存
+experiment_config.train_device = "cuda:0"      # 训练放 GPU，加速反向传播
+experiment_config.sampling_device = "cuda:0"   # 采样设备（如环境支持 GPU）
+experiment_config.buffer_device = "cuda:0"     # 缓冲区放 GPU（如内存允许）
 
 # 提高并行度和批次大小
-experiment_config.off_policy_n_envs_per_worker = 20   # 增加并行环境数
-experiment_config.off_policy_train_batch_size = 256   # 增大批次，提高 GPU 利用率
+experiment_config.off_policy_n_envs_per_worker = 40   # 增加并行环境数
+experiment_config.off_policy_train_batch_size = 512   # 增大批次，提高 GPU 利用率
 experiment_config.off_policy_n_optimizer_steps = 500  # 减少优化步数（如果采样是瓶颈）
 
 experiment_config.save_folder = "outputs"

@@ -159,6 +159,9 @@ class Att_R(nn.Module):
         self.mlp_in = MLP(input_dim, [2 * hidden_dim]).to(device)
         self.mlp_hidden_4 = MLP(2 * hidden_dim, [hidden_dim]).to(device)
         self.mlp_out = MLP(hidden_dim, [output_dim]).to(device)
+        
+        # Cache eye matrix for kron replacement
+        self.register_buffer('_eye2', torch.eye(2, device=device))
 
     def forward(self, x, laplacian, scenario_name):
         self.na = x.shape[1]
@@ -201,7 +204,12 @@ class Att_R(nn.Module):
         
         J = torch.cat((torch.cat((zeros, J21), dim=1), torch.cat((J12, zeros), dim=1)), dim=2)
 
-        return torch.kron(J, torch.eye(2, device=self.device).unsqueeze(0))
+        # Optimized kron replacement: J ⊗ I_2 using repeat_interleave
+        # This is much faster than torch.kron for this specific pattern
+        J_expanded = J.repeat_interleave(2, dim=1).repeat_interleave(2, dim=2)
+        eye_pattern = self._eye2.unsqueeze(0).expand(J.shape[0], -1, -1)
+        eye_tiled = eye_pattern.repeat(1, J.shape[1], J.shape[2])
+        return J_expanded * eye_tiled
 
 
 class Att_J(nn.Module):
@@ -235,37 +243,43 @@ class Att_J(nn.Module):
         self.mlp_in = MLP(input_dim, [2 * hidden_dim]).to(device)
         self.mlp_hidden_4 = MLP(2 * hidden_dim, [hidden_dim]).to(device)
         self.mlp_out = MLP(hidden_dim, [output_dim]).to(device)
+        
+        # Cache eye matrix for kron replacement
+        self.register_buffer('_eye2', torch.eye(2, device=device))
 
     def forward(self, x, laplacian, scenario_name):
+        batch_size = x.shape[0]
         self.na = x.shape[1]
 
-        x = self.mlp_in(x.reshape(-1, self.input_dim)).reshape(x.shape[0], self.na, -1)
+        x = self.mlp_in(x.reshape(-1, self.input_dim)).reshape(batch_size, self.na, -1)
+        x_t = x.transpose(1, 2)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
+            torch.bmm(self.Aq_4.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bq_4.unsqueeze(0))
         K = self.activation_swish(
-            torch.bmm(self.Ak_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
+            torch.bmm(self.Ak_4.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bk_4.unsqueeze(0)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_4.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
+            torch.bmm(self.Av_4.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bv_4.unsqueeze(0))
 
         x = self.activation_swish(
-            torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
+            torch.bmm(self.activation_soft(torch.bmm(Q, K)), V).transpose(1, 2))
 
-        x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).reshape(x.shape[0], self.na, -1)
+        x = self.mlp_hidden_4(x.reshape(-1, 2 * self.hidden_dim)).reshape(batch_size, self.na, -1)
+        x_t = x.transpose(1, 2)
 
         Q = self.activation_swish(
-            torch.bmm(self.Aq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bq_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
+            torch.bmm(self.Aq_7.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bq_7.unsqueeze(0))
         K = self.activation_swish(
-            torch.bmm(self.Ak_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bk_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1)).transpose(1, 2)
+            torch.bmm(self.Ak_7.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bk_7.unsqueeze(0)).transpose(1, 2)
         V = self.activation_swish(
-            torch.bmm(self.Av_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1), x.transpose(1, 2)) + self.Bv_7.unsqueeze(dim=0).expand(x.shape[0], -1, -1))
+            torch.bmm(self.Av_7.unsqueeze(0).expand(batch_size, -1, -1), x_t) + self.Bv_7.unsqueeze(0))
 
         x = self.activation_swish(
-            torch.bmm(self.activation_soft(torch.bmm(Q, K)).to(torch.float32), V).transpose(1, 2))
+            torch.bmm(self.activation_soft(torch.bmm(Q, K)), V).transpose(1, 2))
 
         x = self.mlp_out(x.reshape(-1, self.hidden_dim)).reshape(-1, self.na, self.output_dim).transpose(1, 2)
 
-        batch = int(x.shape[0] / x.shape[2])
+        batch = x.shape[0] // x.shape[2]
 
         j12 = x.sum(1).sum(1).reshape(batch, self.na)
         j21 = -j12
@@ -277,7 +291,11 @@ class Att_J(nn.Module):
         
         J = torch.cat((torch.cat((zeros, J21), dim=1), torch.cat((J12, zeros), dim=1)), dim=2)
 
-        return torch.kron(J, torch.eye(2, device=self.device).unsqueeze(0))
+        # Optimized kron replacement: J ⊗ I_2 using repeat_interleave
+        J_expanded = J.repeat_interleave(2, dim=1).repeat_interleave(2, dim=2)
+        eye_pattern = self._eye2.unsqueeze(0).expand(J.shape[0], -1, -1)
+        eye_tiled = eye_pattern.repeat(1, J.shape[1], J.shape[2])
+        return J_expanded * eye_tiled
 
 
 class Att_H(nn.Module):
@@ -310,6 +328,9 @@ class Att_H(nn.Module):
         self.mlp_in = MLP(input_dim, [2 * hidden_dim]).to(device)
         self.mlp_hidden_4 = MLP(2 * hidden_dim, [hidden_dim]).to(device)
         self.mlp_out = MLP(hidden_dim, [output_dim]).to(device)
+        
+        # Cache ones tensor for kron replacement
+        self.register_buffer('_ones2', torch.ones(1, 2, device=device))
 
     def forward(self, x, na):
         self.na = na
@@ -344,12 +365,13 @@ class Att_H(nn.Module):
         x = self.mlp_out(x.reshape(-1, self.hidden_dim)).unsqueeze(dim=1).transpose(1, 2)
 
         # Reshape, kronecker and post-processing
-        l = 2
-        M11 = torch.kron((x[:, 0:5, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
-        M12 = torch.kron((x[:, 5:10, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
-        M21 = torch.kron((x[:, 10:15, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
-        M22 = torch.kron((x[:, 15:20, :] ** 2).sum(1), torch.ones(1, 2, device=self.device))
-        Mpp = (x[:, 20:25, :] ** 2).sum(1)
+        # Optimized: replace torch.kron(a, ones(1,2)) with a.repeat_interleave(2, dim=-1)
+        x_sq = x ** 2
+        M11 = x_sq[:, 0:5, :].sum(1).repeat_interleave(2, dim=-1)
+        M12 = x_sq[:, 5:10, :].sum(1).repeat_interleave(2, dim=-1)
+        M21 = x_sq[:, 10:15, :].sum(1).repeat_interleave(2, dim=-1)
+        M22 = x_sq[:, 15:20, :].sum(1).repeat_interleave(2, dim=-1)
+        Mpp = x_sq[:, 20:25, :].sum(1)
         
         # Optimized matrix construction using diag_embed
         Mupper11 = torch.diag_embed(M11)
@@ -397,8 +419,8 @@ class Pinn(Model):
         )
         # Output features should be 2 * action_dim (mean and log_std)
         self.output_features = self.output_leaf_spec.shape[-1]
-        self.action_dim_per_agent = self.output_features // 2
-        self.observation_dim_per_agent = self.input_features
+        self.action_dim_per_agent = int(self.output_features // 2)
+        self.observation_dim_per_agent = int(self.input_features)
 
         self.drag = 0.25
         self.log_std_min = -5
@@ -413,6 +435,9 @@ class Pinn(Model):
                                  self.observation_dim_per_agent,
                                  self.n_agents,
                                  self.device).to(self.device)
+        
+        # Cache ones tensor for laplacian kron replacement
+        self.register_buffer('_ones_obs', torch.ones(1, 1, self.observation_dim_per_agent, device=self.device))
         
         # Pre-compute system matrices
         self.F_sys_pinv = torch.cat((torch.zeros(self.action_dim_per_agent * self.n_agents,
@@ -477,16 +502,16 @@ class Pinn(Model):
         # Laplacian
         # Assuming first 2 dims are position
         laplacian_base = self.laplacian(state[:, :, 0:2])
-        laplacian = torch.kron(laplacian_base, torch.ones((1, 1, self.observation_dim_per_agent), device=self.device))
+        # Optimized: replace torch.kron with repeat_interleave
+        laplacian = laplacian_base.unsqueeze(-1).repeat_interleave(self.observation_dim_per_agent, dim=-1)
         laplacian = laplacian.reshape(-1, self.n_agents, self.observation_dim_per_agent)
 
-        # Reshape and normalize inputs
-        state = state.repeat(1, self.n_agents, 1)
-        state = state.reshape(-1, self.n_agents, self.observation_dim_per_agent)
-        state = (laplacian * state)
+        # Reshape and normalize inputs - use expand instead of repeat where possible
+        state = state.unsqueeze(2).expand(-1, -1, self.n_agents, -1).reshape(-1, self.n_agents, self.observation_dim_per_agent)
+        state = laplacian * state
 
-        # Copy input for later usage
-        std_input = state.clone()
+        # Use detach for std_input since it doesn't need gradients from state computation
+        std_input = state.detach().clone()
 
         R_mean = self.R_mean.forward(state.to(torch.float32), laplacian_base.to(torch.float32), self.scenario_name)
         J_mean = self.J_mean.forward(state.to(torch.float32), laplacian_base.to(torch.float32), self.scenario_name)
@@ -515,7 +540,9 @@ class Pinn(Model):
 
         u_mean = torch.bmm(F_sys_pinv, dx_mean.unsqueeze(dim=2) - torch.bmm(J_sys - R_sys, dHdx_sys_mean)).squeeze(dim=2).reshape(batch_size, self.n_agents, -1)
 
-        u_log_std = self.std_net(torch.cat((std_input, u_mean.reshape(-1, u_mean.shape[2]).unsqueeze(1).repeat(1, self.n_agents, 1)), dim=2))
+        # Optimize: use expand instead of repeat, and avoid unnecessary reshape
+        u_mean_expanded = u_mean.reshape(-1, 1, u_mean.shape[2]).expand(-1, self.n_agents, -1)
+        u_log_std = self.std_net(torch.cat((std_input, u_mean_expanded), dim=2))
         
         # BenchMARL Masac expects logits = [loc, scale_params]
         # We output u_mean as loc.
