@@ -16,7 +16,7 @@ algorithm_config = MasacConfig.get_from_yaml()
 
 # 定义场景名称，用于自动选择任务和配置 PINN
 # 可选: "navigation" (无障碍物) 或 "navigation_obs" (带圆形障碍物)
-scenario_name = "navigation_obs"
+scenario_name = "flocking"
 
 # 2. 配置 Actor 模型 (使用 PINN)
 # Configure the PINN model for the Actor

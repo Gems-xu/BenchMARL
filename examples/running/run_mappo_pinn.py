@@ -21,7 +21,7 @@ algorithm_config = MappoConfig.get_from_yaml()
 # algorithm_config.scale_mapping = "exp"  # 备选方案
 
 # 定义场景名称，用于自动选择任务和配置 PINN
-scenario_name = "navigation"
+scenario_name = "flocking"
 
 # 2. 配置 Actor 模型 (使用 PINN)
 # Configure the PINN model for the Actor
