@@ -18,6 +18,7 @@ from .gru import Gru, GruConfig
 from .lstm import Lstm, LstmConfig
 from .mlp import Mlp, MlpConfig
 from .pinn import Pinn, PinnConfig
+from .safe_pinn import SafePinn, SafePinnConfig
 
 classes = [
     "Mlp",
