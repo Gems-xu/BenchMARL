@@ -242,5 +242,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # uv run main.py --algorithm mappo --env vmas --scenario navigation_obs
     main()

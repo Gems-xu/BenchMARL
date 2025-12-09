@@ -13,6 +13,10 @@
 ```bash
 uv run gemsmarl/run.py algorithm=mappo task=vmas/balance
 ```
+or
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run main.py --algorithm masac --env vmas --scenario navigation_obs
+```
 
 
 [![Examples](https://img.shields.io/badge/Examples-blue.svg)](examples) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/facebookresearch/BenchMARL/blob/main/notebooks/run.ipynb)
