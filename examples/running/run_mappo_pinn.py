@@ -9,7 +9,7 @@ from torch import nn
 from gemsmarl.algorithms import MappoConfig
 from gemsmarl.environments import VmasTask
 from gemsmarl.experiment import Experiment, ExperimentConfig
-from gemsmarl.models import MlpConfig, PinnConfig
+from gemsmarl.models import MlpConfig, PinnConfig, SafePinnConfig
 
 # 设置随机种子以确保可重复性
 # torch.manual_seed(0)
@@ -21,19 +21,35 @@ algorithm_config = MappoConfig.get_from_yaml()
 # algorithm_config.scale_mapping = "exp"  # 备选方案
 
 # 定义场景名称，用于自动选择任务和配置 PINN
-scenario_name = "flocking"
+scenario_name = "navigation_obs"
 
-# 2. 配置 Actor 模型 (使用 PINN)
-# Configure the PINN model for the Actor
-# We use the custom PinnConfig we defined
-# Note: The PINN model (LEMURS) requires specific parameters like scenario_name and r_communication
-actor_model_config = PinnConfig(
-    num_cells=[64, 64],
-    layer_class=nn.Linear,
-    activation_class=nn.Tanh,  # Tanh is often used in physics-informed networks
-    scenario_name=scenario_name,
-    r_communication=0.45,
-)
+# 2. 配置 Actor 模型 (使用 PINN 或 Safe_PINN)
+use_safe_pinn = True  # Set to True to use Safe-PINN
+
+if use_safe_pinn:
+    # Configure the Safe-PINN model
+    actor_model_config = SafePinnConfig(
+        num_cells=[64, 64],
+        layer_class=nn.Linear,
+        activation_class=nn.Tanh,
+        scenario_name=scenario_name,
+        r_communication=0.45,
+        r_collision=0.05,  # Collision radius for barrier
+        barrier_epsilon=1e-3,
+        f_max=10.0,        # Force saturation
+    )
+else:
+    # Configure the standard PINN model
+    # Configure the PINN model for the Actor
+    # We use the custom PinnConfig we defined
+    # Note: The PINN model (LEMURS) requires specific parameters like scenario_name and r_communication
+    actor_model_config = PinnConfig(
+        num_cells=[64, 64],
+        layer_class=nn.Linear,
+        activation_class=nn.Tanh,  # Tanh is often used in physics-informed networks
+        scenario_name=scenario_name,
+        r_communication=0.45,
+    )
 
 # 3. 配置 Critic 模型 (使用普通 MLP)
 # MAPPO 使用中心化 Critic，所以可以使用更大的网络
