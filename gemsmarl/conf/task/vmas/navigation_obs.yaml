@@ -4,7 +4,7 @@ defaults:
 
 
 
-max_steps: 300
+max_steps: 100
 n_agents: 4
 collisions: True
 agents_with_same_goal: 1

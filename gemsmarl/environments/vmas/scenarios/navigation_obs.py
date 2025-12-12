@@ -488,11 +488,11 @@ class HeuristicPolicy(BaseHeuristicPolicy):
 
 if __name__ == "__main__":
     import vmas
-    scenario = NavigationScenario()
+    scenario = NavigationObsScenario()
     env = vmas.make_env(
         scenario=scenario,
         num_envs=1,
-        device="cpu",
+        device="cuda:0",
         continuous_actions=True
     )
     obs = env.reset()
@@ -504,7 +504,7 @@ if __name__ == "__main__":
             actions.append(action)
             
         obs, rews, dones, infos = env.step(actions)
-        env.render(mode="human")
+        env.render(mode="rgb_array")
         
         # Print constraint values every 50 steps
         # if step % 50 == 0:
