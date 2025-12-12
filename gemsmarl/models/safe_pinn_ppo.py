@@ -93,13 +93,16 @@ class SafePinnPPO(Model):
         self.r_communication = kwargs.pop("r_communication", 0.45)
         self.r_collision = kwargs.pop("r_collision", 0.2)  # Default: 2x agent radius
         self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.05)  # Larger epsilon for stability
-        self.f_max = kwargs.pop("f_max", 2.0)  # Lower force saturation for PPO
+        self.f_max = kwargs.pop("f_max", 1.0)  # Lower force saturation for PPO
         
         # PPO-specific parameters
         self.task_weight = kwargs.pop("task_weight", 1.0)
-        self.barrier_weight = kwargs.pop("barrier_weight", 0.1)  # Lower weight on barrier
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.05)  # Even lower weight on barrier
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.1)  # Maximum barrier weight
         self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Use log barrier by default
-        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 100)  # Progressive activation
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 200)  # Longer warmup
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 300)  # Start decay after this
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.5)  # Decay to this fraction
         
         super().__init__(
             input_spec=kwargs.pop("input_spec"),
@@ -213,13 +216,28 @@ class SafePinnPPO(Model):
         return H_barrier_ij
 
     def _get_barrier_weight(self):
-        """Progressive barrier activation during training."""
-        if self.barrier_warmup_steps <= 0:
-            return self.barrier_weight
+        """Progressive barrier activation with warmup and decay.
         
-        # Linear warmup
-        progress = min(1.0, self._training_steps.float() / self.barrier_warmup_steps)
-        return self.barrier_weight * progress
+        Schedule:
+        1. [0, warmup_steps]: Linear warmup from 0 to barrier_weight_max
+        2. [warmup_steps, decay_start]: Hold at barrier_weight_max
+        3. [decay_start, inf]: Decay to barrier_weight * decay_rate
+        """
+        steps = self._training_steps.float()
+        
+        if steps < self.barrier_warmup_steps:
+            # Warmup phase: linear increase
+            progress = steps / max(1.0, self.barrier_warmup_steps)
+            return self.barrier_weight_max * progress
+        elif steps < self.barrier_decay_start:
+            # Plateau phase: hold at max
+            return self.barrier_weight_max
+        else:
+            # Decay phase: reduce barrier influence for fine-tuning
+            decay_steps = steps - self.barrier_decay_start
+            decay_progress = min(1.0, decay_steps / 100.0)  # Decay over 100 steps
+            target_weight = self.barrier_weight * self.barrier_decay_rate
+            return self.barrier_weight_max - (self.barrier_weight_max - target_weight) * decay_progress
 
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         # Increment training step counter if training
@@ -317,16 +335,26 @@ class SafePinnPPO(Model):
                 create_graph=self.training
             )[0]
             
-            # Softer gradient clipping for PPO stability
-            grad_H_barrier_clipped = torch.clamp(grad_H_barrier, -self.f_max, self.f_max)
+            # Normalize barrier gradient to prevent large updates
+            barrier_grad_norm = torch.norm(grad_H_barrier, dim=-1, keepdim=True).clamp(min=1e-6)
+            grad_H_barrier_normalized = grad_H_barrier / barrier_grad_norm.clamp(min=1.0)
             
-            # Get current barrier weight (may be ramping up during warmup)
+            # Softer gradient clipping for PPO stability
+            grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
+            
+            # Get current barrier weight (may be ramping up during warmup or decaying)
             current_barrier_weight = self._get_barrier_weight()
+            
+            # Adaptive barrier weight based on task gradient magnitude
+            task_grad_norm = torch.norm(grad_H_task_kin, dim=-1, keepdim=True).mean()
+            # Scale barrier weight inversely with task gradient (when task is strong, reduce barrier)
+            adaptive_scale = 1.0 / (1.0 + task_grad_norm.clamp(max=10.0))
+            effective_barrier_weight = current_barrier_weight * adaptive_scale
             
             # Weighted combination of gradients
             dH_mean_combined = (
                 self.task_weight * grad_H_task_kin + 
-                current_barrier_weight * grad_H_barrier_clipped
+                effective_barrier_weight * grad_H_barrier_clipped
             )
             
         dHq_mean = dH_mean_combined[:, :self.action_dim_per_agent].reshape(-1,
@@ -365,6 +393,11 @@ class SafePinnPPOConfig(ModelConfig):
     """Dataclass config for a :class:`~gemsmarl.models.SafePinnPPO`.
     
     Optimized for on-policy algorithms like MAPPO.
+    
+    Barrier Schedule:
+    - [0, warmup_steps]: Linear warmup from 0 to barrier_weight_max
+    - [warmup_steps, decay_start]: Hold at barrier_weight_max  
+    - [decay_start, inf]: Decay to barrier_weight * decay_rate
     """
 
     num_cells: Sequence[int] = MISSING
@@ -385,14 +418,18 @@ class SafePinnPPOConfig(ModelConfig):
     # Safe PINN specific (with PPO-optimized defaults)
     r_collision: float = 0.2        # 2x agent radius for proper collision distance
     barrier_epsilon: float = 0.05   # Larger epsilon for smoother gradients
-    f_max: float = 2.0              # Lower force saturation for on-policy stability
+    f_max: float = 1.0              # Lower force saturation for on-policy stability
     
     # PPO-specific parameters
     task_weight: float = 1.0        # Weight on task gradient
-    barrier_weight: float = 0.1     # Lower weight on barrier to prevent domination
+    barrier_weight: float = 0.05    # Final barrier weight after decay
+    barrier_weight_max: float = 0.1 # Maximum barrier weight during plateau
     use_log_barrier: bool = True    # Use log barrier for smoother gradients
-    barrier_warmup_steps: int = 100 # Progressive barrier activation
+    barrier_warmup_steps: int = 200 # Steps for barrier warmup
+    barrier_decay_start: int = 300  # Start decay after this many steps
+    barrier_decay_rate: float = 0.5 # Decay to this fraction of barrier_weight
 
     @staticmethod
     def associated_class():
         return SafePinnPPO
+

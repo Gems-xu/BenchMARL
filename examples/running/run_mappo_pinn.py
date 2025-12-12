@@ -28,24 +28,33 @@ use_safe_pinn = True  # Set to True to use Safe-PINN (PPO version)
 
 if use_safe_pinn:
     # Configure the Safe-PINN-PPO model (optimized for on-policy algorithms)
-    # Key differences from SafePinn:
+    # 
+    # Barrier Schedule (prevents late-training instability):
+    # - [0, 200 steps]: Warmup from 0 to 0.1
+    # - [200, 300 steps]: Hold at 0.1 (plateau)
+    # - [300+ steps]: Decay to 0.025 (allow task to dominate for fine-tuning)
+    #
+    # Key improvements over SafePinn (for MASAC):
     # 1. Uses log-barrier (smoother gradients)
-    # 2. Lower barrier_weight to prevent domination over task gradient
-    # 3. Progressive barrier warmup for stable learning
-    # 4. Lower f_max for on-policy stability
+    # 2. Barrier gradient normalization prevents large updates
+    # 3. Adaptive barrier scaling based on task gradient magnitude
+    # 4. Lower f_max (1.0 vs 10.0) for on-policy stability
     actor_model_config = SafePinnPPOConfig(
         num_cells=[64, 64],
         layer_class=nn.Linear,
         activation_class=nn.Tanh,
         scenario_name=scenario_name,
         r_communication=0.45,
-        r_collision=0.2,           # 2x agent_radius (0.1) for proper collision distance
-        barrier_epsilon=0.05,      # Larger epsilon for smoother gradients
-        f_max=2.0,                 # Lower force saturation for PPO stability
-        task_weight=1.0,           # Keep task gradient strong
-        barrier_weight=0.1,        # Lower barrier weight to avoid domination
-        use_log_barrier=True,      # Log barrier has smoother gradient profile
-        barrier_warmup_steps=100,  # Gradually increase barrier influence
+        r_collision=0.2,             # 2x agent_radius (0.1) for proper collision distance
+        barrier_epsilon=0.05,        # Larger epsilon for smoother gradients
+        f_max=1.0,                   # Lower force saturation for PPO stability
+        task_weight=1.0,             # Keep task gradient strong
+        barrier_weight=0.05,         # Final barrier weight after decay
+        barrier_weight_max=0.1,      # Maximum barrier weight during plateau
+        use_log_barrier=True,        # Log barrier has smoother gradient profile
+        barrier_warmup_steps=200,    # Gradual barrier activation
+        barrier_decay_start=300,     # Start reducing barrier after this
+        barrier_decay_rate=0.5,      # Decay to 50% of barrier_weight
     )
 else:
     # Configure the standard PINN model
@@ -83,12 +92,12 @@ experiment_config.on_policy_collected_frames_per_batch = 6000  # 每批收集的
 experiment_config.on_policy_n_minibatch_iters = 45     # minibatch 迭代次数
 experiment_config.on_policy_minibatch_size = 400       # minibatch 大小
 
-# 数值稳定性配置 - PINN 模型可能产生较大梯度，需要更严格的裁剪
+# 数值稳定性配置 - 更严格的梯度裁剪防止后期不稳定
 experiment_config.clip_grad_norm = True
-experiment_config.clip_grad_val = 1.0  # 更严格的梯度裁剪（默认是5.0）
+experiment_config.clip_grad_val = 0.5  # 更严格的梯度裁剪（之前是1.0，默认是5.0）
 
 # 降低学习率以提高稳定性
-experiment_config.lr = 3e-5  # 默认是 5e-5
+experiment_config.lr = 2e-5  # 降低学习率（之前是3e-5，默认是5e-5）
 
 experiment_config.save_folder = "outputs"
 # experiment_config.checkpoint_at_end = True

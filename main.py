@@ -8,7 +8,7 @@ from torch import nn
 from gemsmarl.algorithms import MappoConfig, MasacConfig
 from gemsmarl.environments import PettingZooTask, VmasTask
 from gemsmarl.experiment import Experiment, ExperimentConfig
-from gemsmarl.models import MlpConfig, PinnConfig, SafePinnConfig
+from gemsmarl.models import MlpConfig, PinnConfig, SafePinnConfig, SafePinnPPOConfig
 
 
 AlgorithmName = Literal["masac", "mappo"]
@@ -142,6 +142,7 @@ def build_task(env: EnvironmentName, scenario: str):
 
 def build_actor_model_config(
     scenario: str,
+    algorithm: AlgorithmName,
     use_safe_pinn: bool,
     r_communication: float,
     r_collision: float,
@@ -149,16 +150,38 @@ def build_actor_model_config(
     f_max: float,
 ):
     if use_safe_pinn:
-        return SafePinnConfig(
-            num_cells=[64, 64],
-            layer_class=nn.Linear,
-            activation_class=nn.Tanh,
-            scenario_name=scenario,
-            r_communication=r_communication,
-            r_collision=r_collision,
-            barrier_epsilon=barrier_epsilon,
-            f_max=f_max,
-        )
+        if algorithm == "mappo":
+            # Use PPO-optimized Safe-PINN for MAPPO
+            return SafePinnPPOConfig(
+                num_cells=[64, 64],
+                layer_class=nn.Linear,
+                activation_class=nn.Tanh,
+                scenario_name=scenario,
+                r_communication=r_communication,
+                r_collision=0.2,           # 2x agent_radius (0.1) for proper collision distance
+                barrier_epsilon=0.05,      # Larger epsilon for smoother gradients
+                f_max=1.0,                 # Lower force saturation for PPO stability
+                task_weight=1.0,           # Keep task gradient strong
+                barrier_weight=0.05,       # Final barrier weight after decay
+                barrier_weight_max=0.1,    # Maximum barrier weight during plateau
+                use_log_barrier=True,      # Log barrier has smoother gradient profile
+                barrier_warmup_steps=200,  # Gradual barrier activation
+                barrier_decay_start=300,   # Start reducing barrier after this
+                barrier_decay_rate=0.5,    # Decay to 50% of barrier_weight
+            )
+        else:
+            # Use original Safe-PINN for MASAC (off-policy) and others
+            return SafePinnConfig(
+                num_cells=[64, 64],
+                layer_class=nn.Linear,
+                activation_class=nn.Tanh,
+                scenario_name=scenario,
+                r_communication=r_communication,
+                r_collision=r_collision,
+                barrier_epsilon=barrier_epsilon,
+                f_max=f_max,
+            )
+            
     return PinnConfig(
         num_cells=[64, 64],
         layer_class=nn.Linear,
@@ -220,6 +243,7 @@ def main():
     algorithm_config = build_algorithm_config(args.algorithm)
     actor_model_config = build_actor_model_config(
         scenario=scenario,
+        algorithm=args.algorithm,
         use_safe_pinn=use_safe_pinn,
         r_communication=args.r_communication,
         r_collision=args.r_collision,
