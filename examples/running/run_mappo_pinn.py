@@ -9,7 +9,7 @@ from torch import nn
 from gemsmarl.algorithms import MappoConfig
 from gemsmarl.environments import VmasTask
 from gemsmarl.experiment import Experiment, ExperimentConfig
-from gemsmarl.models import MlpConfig, PinnConfig, SafePinnConfig
+from gemsmarl.models import MlpConfig, PinnConfig, SafePinnPPOConfig
 
 # 设置随机种子以确保可重复性
 # torch.manual_seed(0)
@@ -23,20 +23,29 @@ algorithm_config = MappoConfig.get_from_yaml()
 # 定义场景名称，用于自动选择任务和配置 PINN
 scenario_name = "navigation_obs"
 
-# 2. 配置 Actor 模型 (使用 PINN 或 Safe_PINN)
-use_safe_pinn = True  # Set to True to use Safe-PINN
+# 2. 配置 Actor 模型 (使用 PINN 或 Safe_PINN_PPO)
+use_safe_pinn = True  # Set to True to use Safe-PINN (PPO version)
 
 if use_safe_pinn:
-    # Configure the Safe-PINN model
-    actor_model_config = SafePinnConfig(
+    # Configure the Safe-PINN-PPO model (optimized for on-policy algorithms)
+    # Key differences from SafePinn:
+    # 1. Uses log-barrier (smoother gradients)
+    # 2. Lower barrier_weight to prevent domination over task gradient
+    # 3. Progressive barrier warmup for stable learning
+    # 4. Lower f_max for on-policy stability
+    actor_model_config = SafePinnPPOConfig(
         num_cells=[64, 64],
         layer_class=nn.Linear,
         activation_class=nn.Tanh,
         scenario_name=scenario_name,
         r_communication=0.45,
-        r_collision=0.05,  # Collision radius for barrier
-        barrier_epsilon=1e-3,
-        f_max=10.0,        # Force saturation
+        r_collision=0.2,           # 2x agent_radius (0.1) for proper collision distance
+        barrier_epsilon=0.05,      # Larger epsilon for smoother gradients
+        f_max=2.0,                 # Lower force saturation for PPO stability
+        task_weight=1.0,           # Keep task gradient strong
+        barrier_weight=0.1,        # Lower barrier weight to avoid domination
+        use_log_barrier=True,      # Log barrier has smoother gradient profile
+        barrier_warmup_steps=100,  # Gradually increase barrier influence
     )
 else:
     # Configure the standard PINN model

@@ -19,12 +19,17 @@ from .lstm import Lstm, LstmConfig
 from .mlp import Mlp, MlpConfig
 from .pinn import Pinn, PinnConfig
 from .safe_pinn import SafePinn, SafePinnConfig
+from .safe_pinn_ppo import SafePinnPPO, SafePinnPPOConfig
 
 classes = [
     "Mlp",
     "MlpConfig",
     "Pinn",
     "PinnConfig",
+    "SafePinn",
+    "SafePinnConfig",
+    "SafePinnPPO",
+    "SafePinnPPOConfig",
     "Gnn",
     "GnnConfig",
     "Cnn",
@@ -40,6 +45,8 @@ classes = [
 model_config_registry = {
     "mlp": MlpConfig,
     "pinn": PinnConfig,
+    "safe_pinn": SafePinnConfig,
+    "safe_pinn_ppo": SafePinnPPOConfig,
     "gnn": GnnConfig,
     "cnn": CnnConfig,
     "deepsets": DeepsetsConfig,
