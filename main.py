@@ -152,6 +152,7 @@ def build_actor_model_config(
     if use_safe_pinn:
         if algorithm == "mappo":
             # Use PPO-optimized Safe-PINN for MAPPO
+            # Includes multi-agent scaling for >4 agents
             return SafePinnPPOConfig(
                 num_cells=[64, 64],
                 layer_class=nn.Linear,
@@ -168,6 +169,10 @@ def build_actor_model_config(
                 barrier_warmup_steps=200,  # Gradual barrier activation
                 barrier_decay_start=300,   # Start reducing barrier after this
                 barrier_decay_rate=0.5,    # Decay to 50% of barrier_weight
+                # Multi-agent scaling (automatically handles >4 agents)
+                neighbor_normalized_barrier=True,  # Average barrier instead of sum
+                per_agent_grad_clip=True,          # Clip gradients per-agent
+                auto_scale_by_agents=True,         # Auto-reduce params for many agents
             )
         else:
             # Use original Safe-PINN for MASAC (off-policy) and others

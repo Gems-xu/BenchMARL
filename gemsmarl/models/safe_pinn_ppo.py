@@ -104,6 +104,11 @@ class SafePinnPPO(Model):
         self.barrier_decay_start = kwargs.pop("barrier_decay_start", 300)  # Start decay after this
         self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.5)  # Decay to this fraction
         
+        # Multi-agent scaling parameters (NEW)
+        self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)  # Normalize by neighbor count
+        self.per_agent_grad_clip = kwargs.pop("per_agent_grad_clip", True)  # Clip gradients per-agent
+        self.auto_scale_by_agents = kwargs.pop("auto_scale_by_agents", True)  # Auto-scale params by n_agents
+        
         super().__init__(
             input_spec=kwargs.pop("input_spec"),
             output_spec=kwargs.pop("output_spec"),
@@ -132,6 +137,14 @@ class SafePinnPPO(Model):
         self.drag = 0.25
         self.log_std_min = -5
         self.log_std_max = 2
+        
+        # Multi-agent scaling: reduce barrier influence for more agents
+        # With N agents, there are N*(N-1)/2 pairs, so barrier accumulates quadratically
+        if self.auto_scale_by_agents and self.n_agents > 4:
+            scale_factor = 4.0 / self.n_agents  # Reduce barrier for >4 agents
+            self.barrier_weight = self.barrier_weight * scale_factor
+            self.barrier_weight_max = self.barrier_weight_max * scale_factor
+            self.f_max = self.f_max * scale_factor  # Also reduce force saturation
 
         # Track training steps for barrier warmup
         self.register_buffer('_training_steps', torch.tensor(0, dtype=torch.long))
@@ -305,7 +318,11 @@ class SafePinnPPO(Model):
             k_ij = self.H_barrier_head(state_batch, laplacian_base)  # (b, n, n)
             
             # Mask: only neighbors and not self
-            mask = laplacian_base * (1 - torch.eye(self.n_agents, device=self.device).unsqueeze(0))
+            eye_mask = torch.eye(self.n_agents, device=self.device).unsqueeze(0)
+            mask = laplacian_base * (1 - eye_mask)
+            
+            # Count neighbors per agent for normalization
+            neighbor_count = mask.sum(dim=-1, keepdim=True).clamp(min=1.0)  # (b, n, 1)
             
             # Compute barrier potential
             if self.use_log_barrier:
@@ -313,7 +330,13 @@ class SafePinnPPO(Model):
             else:
                 H_barrier_ij = self._compute_quadratic_barrier(dist, k_ij, mask)
             
-            H_barrier_sum = H_barrier_ij.sum()
+            # Neighbor-normalized barrier: average instead of sum per agent
+            if self.neighbor_normalized_barrier:
+                # Normalize by neighbor count to prevent gradient accumulation
+                H_barrier_per_agent = H_barrier_ij.sum(dim=-1) / neighbor_count.squeeze(-1).clamp(min=1.0)
+                H_barrier_sum = H_barrier_per_agent.sum()
+            else:
+                H_barrier_sum = H_barrier_ij.sum()
             
             # 3. H_kin (Kinetic energy)
             v_batch = state_batch[:, :, 2:4]
@@ -335,27 +358,43 @@ class SafePinnPPO(Model):
                 create_graph=self.training
             )[0]
             
-            # Normalize barrier gradient to prevent large updates
-            barrier_grad_norm = torch.norm(grad_H_barrier, dim=-1, keepdim=True).clamp(min=1e-6)
-            grad_H_barrier_normalized = grad_H_barrier / barrier_grad_norm.clamp(min=1.0)
+            # Per-agent gradient processing (reshape to per-agent)
+            grad_H_barrier_reshaped = grad_H_barrier.reshape(batch_size, self.n_agents, -1)
             
-            # Softer gradient clipping for PPO stability
-            grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
+            if self.per_agent_grad_clip:
+                # Clip gradients per-agent to prevent any single agent from dominating
+                per_agent_norm = torch.norm(grad_H_barrier_reshaped, dim=-1, keepdim=True).clamp(min=1e-6)
+                # Normalize each agent's gradient independently
+                grad_H_barrier_normalized = grad_H_barrier_reshaped / per_agent_norm.clamp(min=1.0)
+                # Clip per-agent
+                grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
+            else:
+                # Global normalization (original behavior)
+                barrier_grad_norm = torch.norm(grad_H_barrier, dim=-1, keepdim=True).clamp(min=1e-6)
+                grad_H_barrier_normalized = grad_H_barrier / barrier_grad_norm.clamp(min=1.0)
+                grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
+                grad_H_barrier_clipped = grad_H_barrier_clipped.reshape(batch_size, self.n_agents, -1)
+            
+            # Reshape task gradient to match
+            grad_H_task_kin_reshaped = grad_H_task_kin.reshape(batch_size, self.n_agents, -1)
             
             # Get current barrier weight (may be ramping up during warmup or decaying)
             current_barrier_weight = self._get_barrier_weight()
             
-            # Adaptive barrier weight based on task gradient magnitude
-            task_grad_norm = torch.norm(grad_H_task_kin, dim=-1, keepdim=True).mean()
+            # Adaptive barrier weight based on task gradient magnitude (per-agent)
+            task_grad_norm_per_agent = torch.norm(grad_H_task_kin_reshaped, dim=-1, keepdim=True)
             # Scale barrier weight inversely with task gradient (when task is strong, reduce barrier)
-            adaptive_scale = 1.0 / (1.0 + task_grad_norm.clamp(max=10.0))
+            adaptive_scale = 1.0 / (1.0 + task_grad_norm_per_agent.clamp(max=5.0))
             effective_barrier_weight = current_barrier_weight * adaptive_scale
             
-            # Weighted combination of gradients
-            dH_mean_combined = (
-                self.task_weight * grad_H_task_kin + 
+            # Weighted combination of gradients (per-agent)
+            dH_mean_combined_reshaped = (
+                self.task_weight * grad_H_task_kin_reshaped + 
                 effective_barrier_weight * grad_H_barrier_clipped
             )
+            
+            # Flatten back
+            dH_mean_combined = dH_mean_combined_reshaped.reshape(-1, self.observation_dim_per_agent)
             
         dHq_mean = dH_mean_combined[:, :self.action_dim_per_agent].reshape(-1,
                                                                    self.n_agents * self.action_dim_per_agent)
@@ -398,6 +437,11 @@ class SafePinnPPOConfig(ModelConfig):
     - [0, warmup_steps]: Linear warmup from 0 to barrier_weight_max
     - [warmup_steps, decay_start]: Hold at barrier_weight_max  
     - [decay_start, inf]: Decay to barrier_weight * decay_rate
+    
+    Multi-Agent Scaling:
+    - neighbor_normalized_barrier: Average barrier per agent instead of sum
+    - per_agent_grad_clip: Clip barrier gradients per-agent independently
+    - auto_scale_by_agents: Automatically reduce barrier for >4 agents
     """
 
     num_cells: Sequence[int] = MISSING
@@ -428,6 +472,11 @@ class SafePinnPPOConfig(ModelConfig):
     barrier_warmup_steps: int = 200 # Steps for barrier warmup
     barrier_decay_start: int = 300  # Start decay after this many steps
     barrier_decay_rate: float = 0.5 # Decay to this fraction of barrier_weight
+    
+    # Multi-agent scaling parameters (for >4 agents)
+    neighbor_normalized_barrier: bool = True   # Average barrier instead of sum
+    per_agent_grad_clip: bool = True           # Clip gradients per-agent
+    auto_scale_by_agents: bool = True          # Auto-scale params for many agents
 
     @staticmethod
     def associated_class():
