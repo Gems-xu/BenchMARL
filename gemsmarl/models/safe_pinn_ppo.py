@@ -97,17 +97,18 @@ class SafePinnPPO(Model):
         
         # PPO-specific parameters
         self.task_weight = kwargs.pop("task_weight", 1.0)
-        self.barrier_weight = kwargs.pop("barrier_weight", 0.05)  # Even lower weight on barrier
-        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.1)  # Maximum barrier weight
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.02)  # Lower base weight for stability
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.05)  # Lower max weight
         self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Use log barrier by default
-        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 200)  # Longer warmup
-        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 300)  # Start decay after this
-        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.5)  # Decay to this fraction
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 300)  # Longer warmup for stability
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 500)  # Later decay start
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.3)  # More aggressive final decay
         
-        # Multi-agent scaling parameters (NEW)
+        # Multi-agent scaling parameters
         self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)  # Normalize by neighbor count
         self.per_agent_grad_clip = kwargs.pop("per_agent_grad_clip", True)  # Clip gradients per-agent
         self.auto_scale_by_agents = kwargs.pop("auto_scale_by_agents", True)  # Auto-scale params by n_agents
+        self.large_scale_mode = kwargs.pop("large_scale_mode", False)  # Extra stability for 10+ agents
         
         super().__init__(
             input_spec=kwargs.pop("input_spec"),
@@ -141,10 +142,25 @@ class SafePinnPPO(Model):
         # Multi-agent scaling: reduce barrier influence for more agents
         # With N agents, there are N*(N-1)/2 pairs, so barrier accumulates quadratically
         if self.auto_scale_by_agents and self.n_agents > 4:
-            scale_factor = 4.0 / self.n_agents  # Reduce barrier for >4 agents
+            # Use quadratic scaling to match pair count growth: N*(N-1)/2 vs 4*3/2=6
+            reference_pairs = 6.0  # 4 agents reference
+            actual_pairs = self.n_agents * (self.n_agents - 1) / 2.0
+            scale_factor = reference_pairs / actual_pairs
             self.barrier_weight = self.barrier_weight * scale_factor
             self.barrier_weight_max = self.barrier_weight_max * scale_factor
-            self.f_max = self.f_max * scale_factor  # Also reduce force saturation
+            # Keep f_max constant for individual agent control authority
+        
+        # Large scale mode: extra stability for 10+ agents
+        if self.n_agents >= 10 or self.large_scale_mode:
+            self.large_scale_mode = True
+            # Further reduce barrier influence
+            self.barrier_weight = self.barrier_weight * 0.5
+            self.barrier_weight_max = self.barrier_weight_max * 0.5
+            # Extend warmup and decay for more gradual changes
+            self.barrier_warmup_steps = max(self.barrier_warmup_steps, 400)
+            self.barrier_decay_start = max(self.barrier_decay_start, 700)
+            # Increase epsilon for softer barriers
+            self.barrier_epsilon = max(self.barrier_epsilon, 0.08)
 
         # Track training steps for barrier warmup
         self.register_buffer('_training_steps', torch.tensor(0, dtype=torch.long))
@@ -204,53 +220,65 @@ class SafePinnPPO(Model):
              raise ValueError("SafePinnPPO model requires input with agent dimension")
 
     def _compute_log_barrier(self, dist, k_ij, mask):
-        """Compute log-barrier potential (smoother than 1/x barrier)."""
+        """Compute log-barrier potential with gradient-aware smoothing."""
         # Log barrier: B(d) = -k * log((d - r_coll) / r_coll)
-        # When d -> r_coll, B -> +inf
-        # Gradient: dB/dd = -k / (d - r_coll) 
+        # Gradient: dB/dd = -k / (d - r_coll)
         
         gap = dist - self.r_collision
         # Ensure gap is positive and bounded
         safe_gap = torch.clamp(gap, min=self.barrier_epsilon)
         
-        # Log barrier (smoother gradient profile)
-        H_barrier_ij = -k_ij * torch.log(safe_gap / (self.r_collision + self.barrier_epsilon)) * mask
+        # Softplus-based log barrier (even smoother near boundary)
+        # This avoids the sharp gradient spike of pure log barrier
+        log_term = torch.log(safe_gap / (self.r_collision + self.barrier_epsilon) + 1e-6)
+        # Apply softplus to smooth out very negative log values
+        H_barrier_ij = k_ij * torch.nn.functional.softplus(-log_term, beta=2.0) * mask
         
-        # Clamp potential to prevent extreme values
-        H_barrier_ij = torch.clamp(H_barrier_ij, min=0.0, max=100.0)
+        # Tighter clamp for large-scale scenarios
+        max_barrier = 50.0 if self.large_scale_mode else 100.0
+        H_barrier_ij = torch.clamp(H_barrier_ij, min=0.0, max=max_barrier)
         
         return H_barrier_ij
 
     def _compute_quadratic_barrier(self, dist, k_ij, mask):
         """Compute quadratic barrier (original, but with larger epsilon)."""
         gap = dist - self.r_collision
-        denom = (gap**2 + self.barrier_epsilon)
+        # Use larger epsilon in large-scale mode
+        eps = self.barrier_epsilon * (2.0 if self.large_scale_mode else 1.0)
+        denom = (gap**2 + eps)
         H_barrier_ij = (k_ij / denom) * mask
+        # Clamp for stability
+        H_barrier_ij = torch.clamp(H_barrier_ij, min=0.0, max=100.0)
         return H_barrier_ij
 
     def _get_barrier_weight(self):
-        """Progressive barrier activation with warmup and decay.
+        """Progressive barrier activation with warmup and smooth decay.
         
         Schedule:
-        1. [0, warmup_steps]: Linear warmup from 0 to barrier_weight_max
+        1. [0, warmup_steps]: Cosine warmup from 0 to barrier_weight_max (smoother start)
         2. [warmup_steps, decay_start]: Hold at barrier_weight_max
-        3. [decay_start, inf]: Decay to barrier_weight * decay_rate
+        3. [decay_start, inf]: Very gradual cosine decay (longer duration)
         """
         steps = self._training_steps.float()
         
         if steps < self.barrier_warmup_steps:
-            # Warmup phase: linear increase
+            # Warmup phase: cosine warmup for smoother gradient changes
             progress = steps / max(1.0, self.barrier_warmup_steps)
-            return self.barrier_weight_max * progress
+            # Cosine warmup: starts slow, accelerates in middle, slows at end
+            cosine_progress = 0.5 * (1.0 - torch.cos(progress * 3.14159))
+            return self.barrier_weight_max * cosine_progress
         elif steps < self.barrier_decay_start:
             # Plateau phase: hold at max
             return self.barrier_weight_max
         else:
-            # Decay phase: reduce barrier influence for fine-tuning
+            # Decay phase: VERY gradual cosine decay over 500 steps (was 100)
+            decay_duration = 500.0
             decay_steps = steps - self.barrier_decay_start
-            decay_progress = min(1.0, decay_steps / 100.0)  # Decay over 100 steps
+            decay_progress = torch.clamp(decay_steps / decay_duration, max=1.0)
+            # Cosine decay for smoothness
+            cosine_decay = 0.5 * (1.0 + torch.cos(decay_progress * 3.14159))
             target_weight = self.barrier_weight * self.barrier_decay_rate
-            return self.barrier_weight_max - (self.barrier_weight_max - target_weight) * decay_progress
+            return target_weight + (self.barrier_weight_max - target_weight) * cosine_decay
 
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         # Increment training step counter if training
@@ -363,11 +391,11 @@ class SafePinnPPO(Model):
             
             if self.per_agent_grad_clip:
                 # Clip gradients per-agent to prevent any single agent from dominating
-                per_agent_norm = torch.norm(grad_H_barrier_reshaped, dim=-1, keepdim=True).clamp(min=1e-6)
-                # Normalize each agent's gradient independently
-                grad_H_barrier_normalized = grad_H_barrier_reshaped / per_agent_norm.clamp(min=1.0)
-                # Clip per-agent
-                grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
+                per_agent_norm = torch.norm(grad_H_barrier_reshaped, dim=-1, keepdim=True)
+                # Soft normalization: scale down large gradients, keep small ones
+                # This is more stable than hard clipping
+                soft_scale = self.f_max / (per_agent_norm + self.f_max)
+                grad_H_barrier_clipped = grad_H_barrier_reshaped * soft_scale
             else:
                 # Global normalization (original behavior)
                 barrier_grad_norm = torch.norm(grad_H_barrier, dim=-1, keepdim=True).clamp(min=1e-6)
@@ -392,6 +420,17 @@ class SafePinnPPO(Model):
                 self.task_weight * grad_H_task_kin_reshaped + 
                 effective_barrier_weight * grad_H_barrier_clipped
             )
+            
+            # Final safety clamp on combined gradient to prevent any extreme values
+            combined_norm = torch.norm(dH_mean_combined_reshaped, dim=-1, keepdim=True)
+            # Tighter limit for large-scale mode
+            max_combined_norm = 3.0 if self.large_scale_mode else 5.0
+            scale_down = torch.where(
+                combined_norm > max_combined_norm,
+                max_combined_norm / (combined_norm + 1e-6),
+                torch.ones_like(combined_norm)
+            )
+            dH_mean_combined_reshaped = dH_mean_combined_reshaped * scale_down
             
             # Flatten back
             dH_mean_combined = dH_mean_combined_reshaped.reshape(-1, self.observation_dim_per_agent)
