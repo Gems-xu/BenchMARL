@@ -273,6 +273,7 @@ class Logger:
         step: int,
         combined_frames: Optional[List] = None,
         key_prefix: str = "Viz",
+        visualizations: Optional[Dict[str, np.ndarray]] = None,
     ):
         """Log potential field visualization to wandb.
         
@@ -281,6 +282,16 @@ class Logger:
             step: Current evaluation step
             combined_frames: Optional list of combined visualization frames for video
             key_prefix: Prefix for the wandb log key (default: "Viz")
+            visualizations: Optional dictionary of additional visualizations to log.
+                Supported keys:
+                - 'barrier_potential': Barrier potential heatmap
+                - 'task_potential': Task potential heatmap
+                - 'total_potential': Total potential heatmap
+                - 'surface_3d': 3D surface plot
+                - 'energy_flow': Energy flow diagram
+                - 'safety_contours': Safety margin contours
+                - 'energy_decomposition': Energy decomposition chart
+                - 'publication_figure': Comprehensive 6-panel figure
         """
         if not len(self.loggers):
             return
@@ -289,13 +300,36 @@ class Logger:
             if isinstance(logger, WandbLogger):
                 import wandb
                 
-                # Log potential field image
+                # Log main potential field image
                 logger.experiment.log({
                     f"{key_prefix}/barrier_potential_field": wandb.Image(
                         potential_image,
                         caption=f"Barrier Potential Field at step {step}"
                     )
                 }, commit=False)
+                
+                # Log additional visualizations if provided
+                if visualizations is not None:
+                    viz_mapping = {
+                        'barrier_potential': ('barrier_potential_heatmap', 'Barrier Potential Field'),
+                        'task_potential': ('task_potential_field', 'Task Potential Field'),
+                        'total_potential': ('total_potential_field', 'Total Potential Field'),
+                        'surface_3d': ('3d_barrier_surface', '3D Barrier Potential Surface'),
+                        'energy_flow': ('energy_flow_diagram', 'Energy Flow Field (Gradient Descent)'),
+                        'safety_contours': ('safety_margin_contours', 'Safety Margin Contours'),
+                        'energy_decomposition': ('energy_decomposition', 'Hamiltonian Energy Decomposition'),
+                        'publication_figure': ('publication_figure', 'Safe-PINN Potential Field Analysis'),
+                    }
+                    
+                    for key, image in visualizations.items():
+                        if key in viz_mapping and image is not None:
+                            log_key, caption = viz_mapping[key]
+                            logger.experiment.log({
+                                f"{key_prefix}/{log_key}": wandb.Image(
+                                    image,
+                                    caption=f"{caption} at step {step}"
+                                )
+                            }, commit=False)
                 
                 # Log combined video if provided
                 if combined_frames is not None and len(combined_frames) > 1:

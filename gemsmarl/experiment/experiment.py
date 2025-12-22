@@ -1002,12 +1002,113 @@ class Experiment(CallbackNotifier):
         # Log potential field visualization if available
         if potential_visualizer is not None and safe_pinn_model is not None and len(combined_viz_frames) > 0:
             try:
+                # Get last state for additional visualizations
+                last_td = rollouts[-1] if rollouts else None
+                
+                # Extract positions from the last combined frame's rendering
+                positions = extract_positions_from_env(self.test_env, env_index=0)
+                agent_pos = positions.get('agents')
+                obs_pos = positions.get('obstacles')
+                goal_pos = positions.get('goals')
+                
+                # Prepare additional visualizations dictionary
+                additional_viz = {}
+                
+                # Compute potential fields using learned model
+                if agent_pos is not None and len(agent_pos) > 0:
+                    import torch
+                    agent_pos_t = torch.tensor(agent_pos, dtype=torch.float32, device=self.config.sampling_device)
+                    obs_pos_t = torch.tensor(obs_pos, dtype=torch.float32, device=self.config.sampling_device) if obs_pos is not None and len(obs_pos) > 0 else None
+                    goal_pos_t = torch.tensor(goal_pos, dtype=torch.float32, device=self.config.sampling_device) if goal_pos is not None and len(goal_pos) > 0 else None
+                    
+                    # Barrier potential field
+                    try:
+                        barrier_field = potential_visualizer.compute_potential_field(
+                            safe_pinn_model, agent_pos_t, obs_pos_t
+                        )
+                        additional_viz['barrier_potential'] = potential_visualizer.render_potential_field(
+                            barrier_field, agent_pos, obs_pos, goal_pos, "Barrier Potential Field"
+                        )
+                    except Exception:
+                        pass
+                    
+                    # Task potential field
+                    try:
+                        if goal_pos_t is not None:
+                            task_field = potential_visualizer.compute_task_potential_field(
+                                safe_pinn_model, agent_pos_t, goal_pos_t
+                            )
+                            additional_viz['task_potential'] = potential_visualizer.render_potential_field(
+                                task_field, agent_pos, obs_pos, goal_pos, "Task Potential Field", cmap="Blues"
+                            )
+                    except Exception:
+                        pass
+                    
+                    # Total potential field
+                    try:
+                        if goal_pos_t is not None:
+                            total_field = potential_visualizer.compute_total_potential_field(
+                                safe_pinn_model, agent_pos_t, obs_pos_t, goal_pos_t
+                            )
+                            additional_viz['total_potential'] = potential_visualizer.render_potential_field(
+                                total_field, agent_pos, obs_pos, goal_pos, "Total Potential Field", cmap="viridis"
+                            )
+                    except Exception:
+                        pass
+                    
+                    # 3D Surface Plot
+                    try:
+                        if 'barrier_field' in dir():
+                            additional_viz['surface_3d'] = potential_visualizer.render_3d_surface_plot(
+                                barrier_field, agent_pos, obs_pos, "3D Barrier Potential Surface"
+                            )
+                    except Exception:
+                        pass
+                    
+                    # Energy Flow Diagram
+                    try:
+                        if 'barrier_field' in dir():
+                            additional_viz['energy_flow'] = potential_visualizer.render_energy_flow_diagram(
+                                barrier_field, agent_pos, obs_pos, goal_pos
+                            )
+                    except Exception:
+                        pass
+                    
+                    # Safety Margin Contours
+                    try:
+                        if 'barrier_field' in dir():
+                            additional_viz['safety_contours'] = potential_visualizer.render_safety_margin_contours(
+                                barrier_field, agent_pos, obs_pos
+                            )
+                    except Exception:
+                        pass
+                    
+                    # Energy Decomposition
+                    try:
+                        if last_td is not None:
+                            additional_viz['energy_decomposition'] = potential_visualizer.render_energy_decomposition(
+                                safe_pinn_model, last_td
+                            )
+                    except Exception:
+                        pass
+                    
+                    # Publication Figure (6-panel comprehensive figure)
+                    try:
+                        if last_td is not None:
+                            additional_viz['publication_figure'] = potential_visualizer.render_publication_figure(
+                                safe_pinn_model, last_td, agent_pos, obs_pos, goal_pos, 
+                                step=self.n_iters_performed, dpi=100  # Lower DPI for faster logging
+                            )
+                    except Exception:
+                        pass
+                
                 # Log the last frame as a static image and all frames as video
                 self.logger.log_potential_field(
                     potential_image=combined_viz_frames[-1],
                     step=self.n_iters_performed,
                     combined_frames=combined_viz_frames if len(combined_viz_frames) > 1 else None,
                     key_prefix="Viz",
+                    visualizations=additional_viz if additional_viz else None,
                 )
             except Exception as e:
                 warnings.warn(f"Could not log potential field visualization: {e}")
