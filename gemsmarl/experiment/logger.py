@@ -25,6 +25,15 @@ from torchrl.record.loggers.wandb import WandbLogger
 
 from gemsmarl.environments import Task
 
+# Import for potential field visualization
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+
 
 class Logger:
     def __init__(
@@ -257,6 +266,50 @@ class Logger:
                     # End of check
 
                     logger.log_video("eval_video", vid, step=step)
+
+    def log_potential_field(
+        self,
+        potential_image: np.ndarray,
+        step: int,
+        combined_frames: Optional[List] = None,
+        key_prefix: str = "Viz",
+    ):
+        """Log potential field visualization to wandb.
+        
+        Args:
+            potential_image: RGB image of the potential field heatmap
+            step: Current evaluation step
+            combined_frames: Optional list of combined visualization frames for video
+            key_prefix: Prefix for the wandb log key (default: "Viz")
+        """
+        if not len(self.loggers):
+            return
+            
+        for logger in self.loggers:
+            if isinstance(logger, WandbLogger):
+                import wandb
+                
+                # Log potential field image
+                logger.experiment.log({
+                    f"{key_prefix}/barrier_potential_field": wandb.Image(
+                        potential_image,
+                        caption=f"Barrier Potential Field at step {step}"
+                    )
+                }, commit=False)
+                
+                # Log combined video if provided
+                if combined_frames is not None and len(combined_frames) > 1:
+                    video_array = np.stack(combined_frames, axis=0)
+                    vid = torch.tensor(
+                        np.transpose(video_array, (0, 3, 1, 2)),
+                        dtype=torch.uint8,
+                    ).unsqueeze(0)
+                    logger.log_video(
+                        f"{key_prefix}/potential_field_video", 
+                        vid, 
+                        fps=10, 
+                        commit=False
+                    )
 
     def commit(self):
         for logger in self.loggers:

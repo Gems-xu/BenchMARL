@@ -39,6 +39,12 @@ from gemsmarl.experiment.callback import Callback, CallbackNotifier
 from gemsmarl.experiment.logger import Logger
 from gemsmarl.models import GnnConfig, SequenceModelConfig
 from gemsmarl.models.common import ModelConfig
+from gemsmarl.experiment.potential_visualizer import (
+    PotentialFieldVisualizer,
+    extract_positions_from_env,
+    get_safe_pinn_model,
+    is_safe_pinn_model,
+)
 from gemsmarl.utils import (
     _add_rnn_transforms,
     _read_yaml_config,
@@ -899,6 +905,24 @@ class Experiment(CallbackNotifier):
                     "Static evaluation is not guaranteed."
                 )
         evaluation_start = time.time()
+        
+        # Initialize potential field visualizer for Safe PINN models
+        potential_visualizer = None
+        safe_pinn_model = None
+        combined_viz_frames = []
+        
+        # Check if we're using Safe PINN and in navigation_obs scenario
+        try:
+            safe_pinn_model = get_safe_pinn_model(self.policy)
+            if safe_pinn_model is not None and 'navigation' in self.task_name.lower():
+                potential_visualizer = PotentialFieldVisualizer(
+                    world_bounds=(-1.5, 1.5, -1.5, 1.5),
+                    grid_resolution=50,
+                    device=self.config.sampling_device,
+                )
+        except Exception as e:
+            warnings.warn(f"Could not initialize potential field visualizer: {e}")
+        
         with set_exploration_type(
             ExplorationType.DETERMINISTIC
             if self.config.evaluation_deterministic_actions
@@ -906,11 +930,36 @@ class Experiment(CallbackNotifier):
         ):
             if self.task.has_render(self.test_env) and self.config.render:
                 video_frames = []
-
+                
                 def callback(env, td):
-                    video_frames.append(
-                        self.task.__class__.render_callback(self, env, td)
-                    )
+                    frame = self.task.__class__.render_callback(self, env, td)
+                    video_frames.append(frame)
+                    
+                    # Compute potential field visualization if Safe PINN is used
+                    if potential_visualizer is not None and safe_pinn_model is not None:
+                        try:
+                            # Extract positions from environment
+                            positions = extract_positions_from_env(env, env_index=0)
+                            
+                            # Compute potential field
+                            potential_field = potential_visualizer.compute_learned_potential_field(
+                                model=safe_pinn_model,
+                                sample_state=td,
+                            )
+                            
+                            # Create combined visualization
+                            combined_frame = potential_visualizer.render_combined_visualization(
+                                env_frame=frame,
+                                potential_field=potential_field,
+                                agent_positions=positions.get('agents'),
+                                obstacle_positions=positions.get('obstacles'),
+                                goal_positions=positions.get('goals'),
+                                step=len(video_frames),
+                            )
+                            combined_viz_frames.append(combined_frame)
+                        except Exception as e:
+                            # Silently continue if visualization fails
+                            pass
 
             else:
                 video_frames = None
@@ -938,6 +987,7 @@ class Experiment(CallbackNotifier):
                     # We are running vectorized evaluation we do not want it to stop when just one env is done
                 )
                 rollouts = list(rollouts.unbind(0))
+        
         evaluation_time = time.time() - evaluation_start
         self.logger.log(
             {"timers/evaluation_time": evaluation_time}, step=self.n_iters_performed
@@ -948,6 +998,20 @@ class Experiment(CallbackNotifier):
             step=self.n_iters_performed,
             total_frames=self.total_frames,
         )
+        
+        # Log potential field visualization if available
+        if potential_visualizer is not None and safe_pinn_model is not None and len(combined_viz_frames) > 0:
+            try:
+                # Log the last frame as a static image and all frames as video
+                self.logger.log_potential_field(
+                    potential_image=combined_viz_frames[-1],
+                    step=self.n_iters_performed,
+                    combined_frames=combined_viz_frames if len(combined_viz_frames) > 1 else None,
+                    key_prefix="Viz",
+                )
+            except Exception as e:
+                warnings.warn(f"Could not log potential field visualization: {e}")
+        
         # Callback
         self._on_evaluation_end(rollouts)
 
