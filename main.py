@@ -37,8 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument(
         "--device",
-        default="cuda:0",
-        help="Device for training/sampling/buffer (e.g., cuda:0 or cpu)",
+        default="cuda",
+        help="Device for training/sampling/buffer (e.g., cuda or cpu)",
     )
     parser.add_argument("--save-folder", default="outputs", help="Directory for logs and checkpoints")
     parser.add_argument(
@@ -237,7 +237,7 @@ def build_experiment_config(args: argparse.Namespace, algorithm: AlgorithmName):
 def main():
     args = parse_args()
     # Default scenarios if not provided
-    default_scenarios = {"vmas": "navigation_obs", "pettingzoo": "simple_tag"}
+    default_scenarios = {"vmas": "navigation_obs_unicycle", "pettingzoo": "simple_tag"}
     scenario = args.scenario or default_scenarios[args.env]
     use_safe_pinn = True
     if args.no_safe_pinn:

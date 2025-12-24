@@ -1,0 +1,19 @@
+defaults:
+  - _self_
+
+# Scenario with unicycle dynamics
+max_steps: 100
+n_agents: 4
+collisions: True
+agents_with_same_goal: 1
+split_goals: False
+observe_all_goals: False
+shared_rew: False
+lidar_range: 0.35
+agent_radius: 0.1
+# Obstacle configuration
+n_obstacles: 3
+obstacle_radius: 0.1
+# Unicycle dynamics parameters
+max_linear_velocity: 0.5
+max_angular_velocity: 3.0

@@ -51,7 +51,14 @@ def _get_task_config_class(environemnt_name: str, task_name: str):
         )
         return module.TaskConfig
     except ModuleNotFoundError:
-        return None
+        # Try alternate path for scenarios in subdirectory (e.g., vmas.scenarios.navigation_obs_unicycle)
+        try:
+            module = importlib.import_module(
+                f"{'.'.join(__name__.split('.')[:-1])}.{environemnt_name}.scenarios.{task_name}"
+            )
+            return module.TaskConfig
+        except ModuleNotFoundError:
+            return None
 
 
 class TaskClass(abc.ABC):

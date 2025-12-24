@@ -19,6 +19,7 @@ from gemsmarl.utils import DEVICE_TYPING
 # 这些场景不在 VMAS 内置场景中，需要从本地模块加载
 CUSTOM_SCENARIOS = {
     "navigation_obs": "gemsmarl.environments.vmas.scenarios.navigation_obs.NavigationObsScenario",
+    "navigation_obs_unicycle": "gemsmarl.environments.vmas.scenarios.navigation_obs_unicycle.NavigationObsUnicycleScenario",
 }
 
 
@@ -111,6 +112,7 @@ class VmasTask(Task):
     SAMPLING = None
     NAVIGATION = None
     NAVIGATION_OBS = None  # Custom navigation with obstacles
+    NAVIGATION_OBS_UNICYCLE = None  # Custom navigation with obstacles and unicycle dynamics
     TRANSPORT = None
     REVERSE_TRANSPORT = None
     WHEEL = None
