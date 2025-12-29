@@ -14,6 +14,6 @@ agent_radius: 0.1
 # Obstacle configuration
 n_obstacles: 3
 obstacle_radius: 0.1
-# Unicycle dynamics parameters
-max_linear_velocity: 0.5
-max_angular_velocity: 3.0
+# Unicycle dynamics parameters - optimized for better learning
+max_linear_velocity: 0.8
+max_angular_velocity: 2.0

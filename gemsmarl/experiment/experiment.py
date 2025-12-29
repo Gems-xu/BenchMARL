@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import importlib
-
+import math
 import os
 import pickle
 import shutil
@@ -875,6 +875,12 @@ class Experiment(CallbackNotifier):
         for param_group in optimizer.param_groups:
             params += param_group["params"]
 
+        # Check and replace NaN/Inf gradients before clipping
+        for p in params:
+            if p.grad is not None:
+                if torch.isnan(p.grad).any() or torch.isinf(p.grad).any():
+                    p.grad = torch.nan_to_num(p.grad, nan=0.0, posinf=1.0, neginf=-1.0)
+
         if self.config.clip_grad_norm and self.config.clip_grad_val is not None:
             total_norm = torch.nn.utils.clip_grad_norm_(
                 params, self.config.clip_grad_val
@@ -886,11 +892,17 @@ class Experiment(CallbackNotifier):
                 for p in params
                 if p.grad is not None
             ]
+            if len(norms) == 0:
+                return 0.0
             total_norm = torch.linalg.vector_norm(torch.stack(norms), norm_type)
             if self.config.clip_grad_val is not None:
                 torch.nn.utils.clip_grad_value_(params, self.config.clip_grad_val)
 
-        return float(total_norm)
+        # Handle potential NaN in total_norm
+        total_norm_val = float(total_norm)
+        if not math.isfinite(total_norm_val):
+            total_norm_val = 0.0
+        return total_norm_val
 
     @local_seed()
     @torch.no_grad()

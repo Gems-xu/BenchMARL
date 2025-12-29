@@ -64,9 +64,15 @@ class SoftBarrierHead(nn.Module):
         
         k_ij_raw = self.mlp_k(z_combined).squeeze(-1)  # (b, n, n)
         
+        # Clamp raw values to prevent extreme outputs
+        k_ij_raw = torch.clamp(k_ij_raw, min=-10.0, max=10.0)
+        
         # Apply softplus with learnable smoothness scaling
         smoothness = self.softplus(self.log_smoothness) + 0.1  # Ensure minimum smoothness
         k_ij = self.softplus(k_ij_raw) * smoothness
+        
+        # Clamp k_ij to prevent numerical instability in long training
+        k_ij = torch.clamp(k_ij, min=0.0, max=10.0)
         
         # Mask with adjacency/interaction range
         k_ij = k_ij * adj
@@ -225,18 +231,27 @@ class SafePinnPPO(Model):
         # Gradient: dB/dd = -k / (d - r_coll)
         
         gap = dist - self.r_collision
-        # Ensure gap is positive and bounded
-        safe_gap = torch.clamp(gap, min=self.barrier_epsilon)
+        # Ensure gap is positive and bounded with larger minimum for stability
+        safe_gap = torch.clamp(gap, min=max(self.barrier_epsilon, 0.02))
         
         # Softplus-based log barrier (even smoother near boundary)
         # This avoids the sharp gradient spike of pure log barrier
-        log_term = torch.log(safe_gap / (self.r_collision + self.barrier_epsilon) + 1e-6)
-        # Apply softplus to smooth out very negative log values
-        H_barrier_ij = k_ij * torch.nn.functional.softplus(-log_term, beta=2.0) * mask
+        ratio = safe_gap / (self.r_collision + self.barrier_epsilon + 1e-6)
+        # Clamp ratio to prevent extreme log values
+        ratio = torch.clamp(ratio, min=0.01, max=100.0)
+        log_term = torch.log(ratio + 1e-6)
         
-        # Tighter clamp for large-scale scenarios
-        max_barrier = 50.0 if self.large_scale_mode else 100.0
+        # Apply softplus to smooth out very negative log values
+        # Clamp input to softplus to prevent extreme values
+        softplus_input = torch.clamp(-log_term, min=-20.0, max=20.0)
+        H_barrier_ij = k_ij * torch.nn.functional.softplus(softplus_input, beta=2.0) * mask
+        
+        # Tighter clamp for stability in long training
+        max_barrier = 20.0 if self.large_scale_mode else 50.0
         H_barrier_ij = torch.clamp(H_barrier_ij, min=0.0, max=max_barrier)
+        
+        # Replace any NaN/Inf with zeros
+        H_barrier_ij = torch.nan_to_num(H_barrier_ij, nan=0.0, posinf=max_barrier, neginf=0.0)
         
         return H_barrier_ij
 
@@ -379,12 +394,18 @@ class SafePinnPPO(Model):
                 create_graph=self.training
             )[0]
             
+            # Replace NaN/Inf in gradients for numerical stability
+            grad_H_task_kin = torch.nan_to_num(grad_H_task_kin, nan=0.0, posinf=1.0, neginf=-1.0)
+            
             grad_H_barrier = torch.autograd.grad(
                 H_barrier_sum, 
                 state_h_mean, 
                 only_inputs=True, 
                 create_graph=self.training
             )[0]
+            
+            # Replace NaN/Inf in gradients for numerical stability
+            grad_H_barrier = torch.nan_to_num(grad_H_barrier, nan=0.0, posinf=1.0, neginf=-1.0)
             
             # Per-agent gradient processing (reshape to per-agent)
             grad_H_barrier_reshaped = grad_H_barrier.reshape(batch_size, self.n_agents, -1)

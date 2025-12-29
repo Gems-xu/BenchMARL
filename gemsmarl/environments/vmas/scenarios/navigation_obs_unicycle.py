@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 
 from vmas.simulator.core import Agent, Entity, Landmark, Sphere, World
+from vmas.simulator.dynamics.diff_drive import DiffDrive
 from vmas.simulator.heuristic_policy import BaseHeuristicPolicy
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
@@ -79,8 +80,8 @@ class NavigationObsUnicycleScenario(BaseScenario):
         self.obstacle_radius = kwargs.pop("obstacle_radius", 0.1)
         
         # Unicycle dynamics parameters
-        self.max_linear_velocity = kwargs.pop("max_linear_velocity", 0.5)
-        self.max_angular_velocity = kwargs.pop("max_angular_velocity", 3.0)
+        self.max_linear_velocity = kwargs.pop("max_linear_velocity", 0.8)
+        self.max_angular_velocity = kwargs.pop("max_angular_velocity", 2.0)
         
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
@@ -103,15 +104,17 @@ class NavigationObsUnicycleScenario(BaseScenario):
                 and self.agents_with_same_goal == self.n_agents // 2
             ), "Splitting the goals is allowed when the agents are even and half the team has the same goal"
 
-        # Make world - disable default drag for custom dynamics
+        # Make world with DiffDrive dynamics
         world = World(
             batch_dim,
             device,
-            substeps=5,  # More substeps for stable integration
+            substeps=2,
             x_semidim=self.x_semidim,
             y_semidim=self.y_semidim,
-            drag=0.0,  # Disable default drag
         )
+        
+        # Store reference for DiffDrive dynamics
+        self._world_ref = world
 
         known_colors = [
             (0.22, 0.49, 0.72),
@@ -160,24 +163,24 @@ class NavigationObsUnicycleScenario(BaseScenario):
                 ),
                 mass=1.0,
                 max_speed=None,  # Handled by unicycle model
+                # Use DiffDrive dynamics for unicycle kinematics
+                dynamics=DiffDrive(world=world, integration="rk4"),
+                # Enable rotation for unicycle
+                rotatable=True,
             )
             
-            # Add custom attributes for unicycle state
-            # Store orientation (theta) and angular velocity separately
-            agent.orientation = torch.zeros(batch_dim, device=device)  # theta angle
-            agent.ang_vel_command = torch.zeros(batch_dim, device=device)  # omega
-            
-            # Other agent attributes
+            # Other agent attributes (no need for manual orientation tracking)
             agent.constraint_val = torch.zeros(batch_dim, device=device)
             agent.pos_rew = torch.zeros(batch_dim, device=device)
             agent.agent_collision_rew = agent.pos_rew.clone()
             world.add_agent(agent)
 
-            # Add goals
+            # Add goals with larger radius for easier reaching
             goal = Landmark(
                 name=f"goal {i}",
                 collide=False,
                 color=color,
+                shape=Sphere(radius=self.agent_radius),  # Same size as agent for visibility
             )
             world.add_landmark(goal)
             agent.goal = goal
@@ -211,14 +214,16 @@ class NavigationObsUnicycleScenario(BaseScenario):
         # Initialize random orientations and zero velocity for unicycle agents
         for agent in self.world.agents:
             if env_index is None:
-                # Random orientation between -pi and pi
-                agent.orientation = (torch.rand(self.world.batch_dim, device=self.world.device) * 2 * torch.pi - torch.pi)
+                # Random orientation between -pi and pi (use agent.state.rot)
+                random_rot = (torch.rand(self.world.batch_dim, 1, device=self.world.device) * 2 * torch.pi - torch.pi)
+                agent.set_rot(random_rot, batch_index=None)
                 agent.state.vel[:] = 0  # Start with zero velocity
-                agent.ang_vel_command[:] = 0
+                agent.state.ang_vel[:] = 0
             else:
-                agent.orientation[env_index] = (torch.rand(1, device=self.world.device).item() * 2 * torch.pi - torch.pi)
+                random_rot = torch.rand(1, device=self.world.device).item() * 2 * torch.pi - torch.pi
+                agent.set_rot(torch.tensor([[random_rot]], device=self.world.device), batch_index=env_index)
                 agent.state.vel[env_index] = 0
-                agent.ang_vel_command[env_index] = 0
+                agent.state.ang_vel[env_index] = 0
 
         occupied_positions = torch.stack(
             [agent.state.pos for agent in self.world.agents], dim=1
@@ -280,29 +285,20 @@ class NavigationObsUnicycleScenario(BaseScenario):
 
     def process_action(self, agent: Agent):
         """
-        Process actions for unicycle dynamics.
+        Process actions for unicycle dynamics using DiffDrive.
         Action space: normalized [-1, 1]^2 representing [v, omega]
         - action[0]: normalized linear velocity (mapped to [-max_linear_velocity, max_linear_velocity])
         - action[1]: normalized angular velocity (mapped to [-max_angular_velocity, max_angular_velocity])
         
-        Updates agent velocity based on unicycle kinematics:
-            vx = v * cos(theta)
-            vy = v * sin(theta)
-        And stores angular velocity for rotation update.
+        The DiffDrive dynamics will handle the unicycle kinematics:
+            dx/dt = v * cos(theta)
+            dy/dt = v * sin(theta)
+            dtheta/dt = omega
         """
-        # Map normalized actions [-1, 1] to actual velocity ranges
-        v = agent.action.u[:, 0] * self.max_linear_velocity
-        omega = agent.action.u[:, 1] * self.max_angular_velocity
-        
-        # Get current orientation
-        theta = agent.orientation
-        
-        # Unicycle kinematics: compute linear velocity from v and theta
-        agent.state.vel[:, X] = v * torch.cos(theta)
-        agent.state.vel[:, Y] = v * torch.sin(theta)
-        
-        # Store angular velocity command for integration in the world step
-        agent.ang_vel_command = omega
+        # Scale normalized actions [-1, 1] to actual velocity ranges
+        # DiffDrive expects: action[0] = forward velocity, action[1] = angular velocity
+        agent.action.u[:, 0] = agent.action.u[:, 0] * self.max_linear_velocity
+        agent.action.u[:, 1] = agent.action.u[:, 1] * self.max_angular_velocity
         
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -378,6 +374,19 @@ class NavigationObsUnicycleScenario(BaseScenario):
         pos_shaping = agent.distance_to_goal * self.pos_shaping_factor
         agent.pos_rew = agent.pos_shaping - pos_shaping
         agent.pos_shaping = pos_shaping
+        
+        # Add heading reward: encourage agent to face the goal
+        theta = agent.state.rot.squeeze(-1)
+        goal_dir = agent.goal.state.pos - agent.state.pos
+        goal_angle = torch.atan2(goal_dir[:, 1], goal_dir[:, 0])
+        angle_error = torch.abs(torch.atan2(
+            torch.sin(goal_angle - theta), 
+            torch.cos(goal_angle - theta)
+        ))
+        # Heading bonus: max 0.1 when perfectly aligned, 0 when perpendicular
+        heading_bonus = 0.05 * (1.0 - angle_error / torch.pi) * (1.0 - agent.on_goal.float())
+        agent.pos_rew = agent.pos_rew + heading_bonus
+        
         return agent.pos_rew
 
     def observation(self, agent: Agent):
@@ -386,8 +395,15 @@ class NavigationObsUnicycleScenario(BaseScenario):
         - agent position (2D)
         - agent velocity (2D)  
         - agent orientation cos(theta), sin(theta) (2D) - for unicycle
+        - goal direction in agent's local frame cos(goal_angle - theta), sin(goal_angle - theta) (2D)
+        - distance to goal (1D)
         - goal position relative to agent (2D or more if observe_all_goals)
         - lidar readings (if collisions enabled)
+        
+        The local goal direction helps the policy directly learn what action to take:
+        - If goal is in front (local_goal_dir ≈ [1, 0]): go forward
+        - If goal is to the left (local_goal_dir ≈ [0, 1]): turn left first
+        - If goal is behind (local_goal_dir ≈ [-1, 0]): turn around
         """
         goal_poses = []
         if self.observe_all_goals:
@@ -396,17 +412,33 @@ class NavigationObsUnicycleScenario(BaseScenario):
         else:
             goal_poses.append(agent.state.pos - agent.goal.state.pos)
         
-        # Add orientation information as cos(theta), sin(theta)
-        theta = agent.orientation
+        # Agent orientation as cos(theta), sin(theta)
+        theta = agent.state.rot.squeeze(-1)
         orientation = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1)
+        
+        # Goal direction in world frame
+        goal_rel = agent.goal.state.pos - agent.state.pos
+        goal_angle = torch.atan2(goal_rel[:, 1], goal_rel[:, 0])
+        
+        # Goal direction in agent's local frame (very useful for unicycle control)
+        local_goal_angle = goal_angle - theta
+        local_goal_dir = torch.stack([
+            torch.cos(local_goal_angle), 
+            torch.sin(local_goal_angle)
+        ], dim=-1)
+        
+        # Distance to goal (normalized by world size)
+        dist_to_goal = torch.linalg.vector_norm(goal_rel, dim=-1, keepdim=True) / (2 * self.world_spawning_x)
         
         return torch.cat(
             [
-                agent.state.pos,       # (2,)
-                agent.state.vel,       # (2,)
+                agent.state.pos,       # (2,) position
+                agent.state.vel,       # (2,) velocity
                 orientation,           # (2,) cos(theta), sin(theta)
+                local_goal_dir,        # (2,) goal direction in local frame
+                dist_to_goal,          # (1,) normalized distance to goal
             ]
-            + goal_poses            # (2,) or more
+            + goal_poses            # (2,) or more - goal relative position
             + (
                 [agent.sensors[0]._max_range - agent.sensors[0].measure()]  # (n_rays,)
                 if self.collisions
@@ -463,7 +495,8 @@ class NavigationObsUnicycleScenario(BaseScenario):
         
         # Draw orientation arrows for unicycle agents
         for agent in self.world.agents:
-            theta = agent.orientation[env_index]
+            # Use agent.state.rot instead of agent.orientation
+            theta = agent.state.rot[env_index, 0]
             pos = agent.state.pos[env_index]
             
             # Arrow length proportional to agent radius
@@ -485,16 +518,10 @@ class NavigationObsUnicycleScenario(BaseScenario):
     
     def post_step(self):
         """
-        Called after physics step to update unicycle orientations.
-        Updates theta based on angular velocity command.
+        Called after physics step.
+        DiffDrive handles orientation updates internally, so nothing needed here.
         """
-        for agent in self.world.agents:
-            # Update orientation: theta += omega * dt
-            # dt is already accounted for in the world integration
-            dt = self.world.dt
-            agent.orientation += agent.ang_vel_command * dt
-            # Normalize angle to [-pi, pi]
-            agent.orientation = torch.atan2(torch.sin(agent.orientation), torch.cos(agent.orientation))
+        pass
 
 
 class HeuristicPolicy(BaseHeuristicPolicy):
@@ -508,40 +535,31 @@ class HeuristicPolicy(BaseHeuristicPolicy):
     def compute_action(self, observation: Tensor, u_range: Tensor) -> Tensor:
         """
         Simple proportional controller for unicycle model.
-        Maps desired velocity direction to [v, omega] commands.
+        Uses local goal direction from observation for direct control.
+        
+        Observation format:
+            [pos(2), vel(2), orientation(2), local_goal_dir(2), dist_to_goal(1), goal_rel(2), ...]
         
         Args:
-            observation: [pos(2), vel(2), orientation(2), goal_rel(2), ...]
+            observation: observation tensor
             u_range: [max_v, max_omega]
         """
         self.n_env = observation.shape[0]
         self.device = observation.device
         
-        agent_pos = observation[:, :2]
-        # Orientation stored as [cos(theta), sin(theta)] at index 4:6
-        cos_theta = observation[:, 4]
-        sin_theta = observation[:, 5]
-        theta = torch.atan2(sin_theta, cos_theta)
+        # Local goal direction (already in agent's frame) at index 6:8
+        local_goal_cos = observation[:, 6]  # cos(goal_angle - theta)
+        local_goal_sin = observation[:, 7]  # sin(goal_angle - theta)
         
-        # Goal position (relative position is negated in observation)
-        goal_rel = observation[:, 6:8]
-        goal_pos = agent_pos - goal_rel  # Actual goal position
+        # Normalized distance to goal at index 8
+        dist_normalized = observation[:, 8]
         
-        # Compute desired heading to goal
-        delta_pos = goal_pos - agent_pos
-        desired_theta = torch.atan2(delta_pos[:, Y], delta_pos[:, X])
-        
-        # Angular error
-        theta_error = desired_theta - theta
-        # Normalize to [-pi, pi]
-        theta_error = torch.atan2(torch.sin(theta_error), torch.cos(theta_error))
-        
-        # Distance to goal
-        distance = torch.linalg.vector_norm(delta_pos, dim=-1)
+        # Angular error is simply atan2(sin, cos) of local goal direction
+        theta_error = torch.atan2(local_goal_sin, local_goal_cos)
         
         # Proportional control
-        # Linear velocity: proportional to distance, reduced when not facing goal
-        v = self.k_v * distance * torch.cos(theta_error)
+        # Linear velocity: go forward when facing goal, slow when need to turn
+        v = self.k_v * dist_normalized * torch.cos(theta_error)
         omega = self.k_omega * theta_error
         
         # Clamp to action limits
@@ -577,9 +595,11 @@ if __name__ == "__main__":
     print(f"  - Position: [0:2]")
     print(f"  - Velocity: [2:4]")
     print(f"  - Orientation (cos, sin): [4:6]")
-    print(f"  - Goal relative position: [6:8]")
+    print(f"  - Local goal direction (cos, sin): [6:8]")
+    print(f"  - Distance to goal (normalized): [8:9]")
+    print(f"  - Goal relative position: [9:11]")
     if scenario.collisions:
-        print(f"  - Lidar readings: [8:{8+scenario.n_lidar_rays}]")
+        print(f"  - Lidar readings: [11:{11+scenario.n_lidar_rays}]")
     print("=" * 60)
     
     for step in range(200):
