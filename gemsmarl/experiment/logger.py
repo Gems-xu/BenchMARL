@@ -300,13 +300,13 @@ class Logger:
             if isinstance(logger, WandbLogger):
                 import wandb
                 
-                # Log main potential field image
-                logger.experiment.log({
-                    f"{key_prefix}/barrier_potential_field": wandb.Image(
-                        potential_image,
-                        caption=f"Barrier Potential Field at step {step}"
-                    )
-                }, commit=False)
+                # # Log main potential field image
+                # logger.experiment.log({
+                #     f"{key_prefix}/barrier_potential_field": wandb.Image(
+                #         potential_image,
+                #         caption=f"Barrier Potential Field at step {step}"
+                #     )
+                # }, commit=False)
                 
                 # Log additional visualizations if provided
                 if visualizations is not None:
@@ -314,11 +314,11 @@ class Logger:
                         'barrier_potential': ('barrier_potential_heatmap', 'Barrier Potential Field'),
                         'task_potential': ('task_potential_field', 'Task Potential Field'),
                         'total_potential': ('total_potential_field', 'Total Potential Field'),
-                        'surface_3d': ('3d_barrier_surface', '3D Barrier Potential Surface'),
-                        'energy_flow': ('energy_flow_diagram', 'Energy Flow Field (Gradient Descent)'),
-                        'safety_contours': ('safety_margin_contours', 'Safety Margin Contours'),
-                        'energy_decomposition': ('energy_decomposition', 'Hamiltonian Energy Decomposition'),
-                        'publication_figure': ('publication_figure', 'Safe-PINN Potential Field Analysis'),
+                        # 'surface_3d': ('3d_barrier_surface', '3D Barrier Potential Surface'),
+                        # 'energy_flow': ('energy_flow_diagram', 'Energy Flow Field (Gradient Descent)'),
+                        # 'safety_contours': ('safety_margin_contours', 'Safety Margin Contours'),
+                        # 'energy_decomposition': ('energy_decomposition', 'Hamiltonian Energy Decomposition'),
+                        # 'publication_figure': ('publication_figure', 'Safe-PINN Potential Field Analysis'),
                     }
                     
                     for key, image in visualizations.items():

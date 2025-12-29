@@ -1068,51 +1068,51 @@ class Experiment(CallbackNotifier):
                     except Exception:
                         pass
                     
-                    # 3D Surface Plot
-                    try:
-                        if 'barrier_field' in dir():
-                            additional_viz['surface_3d'] = potential_visualizer.render_3d_surface_plot(
-                                barrier_field, agent_pos, obs_pos, "3D Barrier Potential Surface"
-                            )
-                    except Exception:
-                        pass
+                    # # 3D Surface Plot
+                    # try:
+                    #     if 'barrier_field' in dir():
+                    #         additional_viz['surface_3d'] = potential_visualizer.render_3d_surface_plot(
+                    #             barrier_field, agent_pos, obs_pos, "3D Barrier Potential Surface"
+                    #         )
+                    # except Exception:
+                    #     pass
                     
-                    # Energy Flow Diagram
-                    try:
-                        if 'barrier_field' in dir():
-                            additional_viz['energy_flow'] = potential_visualizer.render_energy_flow_diagram(
-                                barrier_field, agent_pos, obs_pos, goal_pos
-                            )
-                    except Exception:
-                        pass
+                    # # Energy Flow Diagram
+                    # try:
+                    #     if 'barrier_field' in dir():
+                    #         additional_viz['energy_flow'] = potential_visualizer.render_energy_flow_diagram(
+                    #             barrier_field, agent_pos, obs_pos, goal_pos
+                    #         )
+                    # except Exception:
+                    #     pass
                     
-                    # Safety Margin Contours
-                    try:
-                        if 'barrier_field' in dir():
-                            additional_viz['safety_contours'] = potential_visualizer.render_safety_margin_contours(
-                                barrier_field, agent_pos, obs_pos
-                            )
-                    except Exception:
-                        pass
+                    # # Safety Margin Contours
+                    # try:
+                    #     if 'barrier_field' in dir():
+                    #         additional_viz['safety_contours'] = potential_visualizer.render_safety_margin_contours(
+                    #             barrier_field, agent_pos, obs_pos
+                    #         )
+                    # except Exception:
+                    #     pass
                     
-                    # Energy Decomposition
-                    try:
-                        if last_td is not None:
-                            additional_viz['energy_decomposition'] = potential_visualizer.render_energy_decomposition(
-                                safe_pinn_model, last_td
-                            )
-                    except Exception:
-                        pass
+                    # # Energy Decomposition
+                    # try:
+                    #     if last_td is not None:
+                    #         additional_viz['energy_decomposition'] = potential_visualizer.render_energy_decomposition(
+                    #             safe_pinn_model, last_td
+                    #         )
+                    # except Exception:
+                    #     pass
                     
-                    # Publication Figure (6-panel comprehensive figure)
-                    try:
-                        if last_td is not None:
-                            additional_viz['publication_figure'] = potential_visualizer.render_publication_figure(
-                                safe_pinn_model, last_td, agent_pos, obs_pos, goal_pos, 
-                                step=self.n_iters_performed, dpi=100  # Lower DPI for faster logging
-                            )
-                    except Exception:
-                        pass
+                    # # Publication Figure (6-panel comprehensive figure)
+                    # try:
+                    #     if last_td is not None:
+                    #         additional_viz['publication_figure'] = potential_visualizer.render_publication_figure(
+                    #             safe_pinn_model, last_td, agent_pos, obs_pos, goal_pos, 
+                    #             step=self.n_iters_performed, dpi=100  # Lower DPI for faster logging
+                    #         )
+                    # except Exception:
+                    #     pass
                 
                 # Log the last frame as a static image and all frames as video
                 self.logger.log_potential_field(
