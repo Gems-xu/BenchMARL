@@ -385,9 +385,36 @@ class SafePinnPPO(Model):
             v_batch = state_batch[:, :, 2:4]
             H_kin_sum = 0.5 * torch.sum(v_batch**2)
             
-            # Compute gradients separately for proper weighting
+            # 4. H_goal (Goal attraction potential) - POSITION-BASED potential
+            # 
+            # Observation format (18D): 
+            #   - pos = indices 0:2 (agent position, q)
+            #   - vel = indices 2:4 (velocity, p)
+            #   - goal_offset = indices 4:6 (agent.pos - goal.pos)
+            # 
+            # The gradient dH/dq is what controls movement direction.
+            # We need H_goal to be a function of POSITION (q) at indices 0:2,
+            # not goal_offset at indices 4:6.
+            #
+            # Reconstruct goal position from: goal_pos = q - goal_offset
+            q_pos = state_batch[:, :, 0:2]  # Current position (has gradients)
+            goal_offset_obs = state_batch[:, :, 4:6]  # goal_offset from observation
+            
+            # Detach goal_pos - treat as constant target
+            goal_pos = (q_pos - goal_offset_obs).detach()
+            
+            # Compute H_goal as function of q_pos (gradient flows through position!)
+            goal_diff = q_pos - goal_pos  # = goal_offset, but gradient flows through q_pos
+            dist_to_goal_sq = torch.sum(goal_diff**2, dim=-1)  # (b, n)
+            
+            # Strong quadratic attractive potential
+            # dH_goal/dq = goal_diff, points AWAY from goal
+            # Force = -dH_goal/dq = -goal_diff, points TOWARDS goal (correct!)
+            H_goal_sum = 0.5 * dist_to_goal_sq.sum() * 10.0  # Very strong goal attraction
+            
+            # Compute gradients - include explicit goal potential
             grad_H_task_kin = torch.autograd.grad(
-                H_task_sum + H_kin_sum, 
+                H_task_sum + H_kin_sum + H_goal_sum, 
                 state_h_mean, 
                 only_inputs=True, 
                 retain_graph=True, 
@@ -407,54 +434,21 @@ class SafePinnPPO(Model):
             # Replace NaN/Inf in gradients for numerical stability
             grad_H_barrier = torch.nan_to_num(grad_H_barrier, nan=0.0, posinf=1.0, neginf=-1.0)
             
-            # Per-agent gradient processing (reshape to per-agent)
-            grad_H_barrier_reshaped = grad_H_barrier.reshape(batch_size, self.n_agents, -1)
-            
-            if self.per_agent_grad_clip:
-                # Clip gradients per-agent to prevent any single agent from dominating
-                per_agent_norm = torch.norm(grad_H_barrier_reshaped, dim=-1, keepdim=True)
-                # Soft normalization: scale down large gradients, keep small ones
-                # This is more stable than hard clipping
-                soft_scale = self.f_max / (per_agent_norm + self.f_max)
-                grad_H_barrier_clipped = grad_H_barrier_reshaped * soft_scale
-            else:
-                # Global normalization (original behavior)
-                barrier_grad_norm = torch.norm(grad_H_barrier, dim=-1, keepdim=True).clamp(min=1e-6)
-                grad_H_barrier_normalized = grad_H_barrier / barrier_grad_norm.clamp(min=1.0)
-                grad_H_barrier_clipped = torch.clamp(grad_H_barrier_normalized, -self.f_max, self.f_max)
-                grad_H_barrier_clipped = grad_H_barrier_clipped.reshape(batch_size, self.n_agents, -1)
-            
-            # Reshape task gradient to match
-            grad_H_task_kin_reshaped = grad_H_task_kin.reshape(batch_size, self.n_agents, -1)
+            # Simple gradient clipping for barrier
+            grad_H_barrier_clipped = torch.clamp(grad_H_barrier, -self.f_max, self.f_max)
             
             # Get current barrier weight (may be ramping up during warmup or decaying)
             current_barrier_weight = self._get_barrier_weight()
             
-            # Adaptive barrier weight based on task gradient magnitude (per-agent)
-            task_grad_norm_per_agent = torch.norm(grad_H_task_kin_reshaped, dim=-1, keepdim=True)
-            # Scale barrier weight inversely with task gradient (when task is strong, reduce barrier)
-            adaptive_scale = 1.0 / (1.0 + task_grad_norm_per_agent.clamp(max=5.0))
-            effective_barrier_weight = current_barrier_weight * adaptive_scale
-            
-            # Weighted combination of gradients (per-agent)
-            dH_mean_combined_reshaped = (
-                self.task_weight * grad_H_task_kin_reshaped + 
-                effective_barrier_weight * grad_H_barrier_clipped
+            # Combine: task is primary, barrier is secondary with fixed small weight
+            # Avoid complex adaptive weighting that may suppress motion
+            dH_mean_combined = (
+                self.task_weight * grad_H_task_kin + 
+                current_barrier_weight * grad_H_barrier_clipped
             )
             
-            # Final safety clamp on combined gradient to prevent any extreme values
-            combined_norm = torch.norm(dH_mean_combined_reshaped, dim=-1, keepdim=True)
-            # Tighter limit for large-scale mode
-            max_combined_norm = 3.0 if self.large_scale_mode else 5.0
-            scale_down = torch.where(
-                combined_norm > max_combined_norm,
-                max_combined_norm / (combined_norm + 1e-6),
-                torch.ones_like(combined_norm)
-            )
-            dH_mean_combined_reshaped = dH_mean_combined_reshaped * scale_down
-            
-            # Flatten back
-            dH_mean_combined = dH_mean_combined_reshaped.reshape(-1, self.observation_dim_per_agent)
+            # Moderate safety clamp (allow larger gradients for motion)
+            dH_mean_combined = torch.clamp(dH_mean_combined, min=-10.0, max=10.0)
             
         dHq_mean = dH_mean_combined[:, :self.action_dim_per_agent].reshape(-1,
                                                                    self.n_agents * self.action_dim_per_agent)

@@ -286,19 +286,49 @@ class NavigationObsUnicycleScenario(BaseScenario):
     def process_action(self, agent: Agent):
         """
         Process actions for unicycle dynamics using DiffDrive.
-        Action space: normalized [-1, 1]^2 representing [v, omega]
-        - action[0]: normalized linear velocity (mapped to [-max_linear_velocity, max_linear_velocity])
-        - action[1]: normalized angular velocity (mapped to [-max_angular_velocity, max_angular_velocity])
+        
+        The Safe PINN model outputs "force-like" actions [ax, ay] for holonomic systems.
+        We convert these to unicycle control [v, omega]:
+        
+        1. Interpret [ax, ay] as the desired acceleration/movement direction
+        2. v = magnitude of desired velocity in the heading direction
+        3. omega = angular velocity to turn towards the desired direction
         
         The DiffDrive dynamics will handle the unicycle kinematics:
             dx/dt = v * cos(theta)
             dy/dt = v * sin(theta)
             dtheta/dt = omega
         """
-        # Scale normalized actions [-1, 1] to actual velocity ranges
-        # DiffDrive expects: action[0] = forward velocity, action[1] = angular velocity
-        agent.action.u[:, 0] = agent.action.u[:, 0] * self.max_linear_velocity
-        agent.action.u[:, 1] = agent.action.u[:, 1] * self.max_angular_velocity
+        # Get the raw action (interpreted as desired direction [ax, ay] in [-1, 1])
+        ax = agent.action.u[:, 0]  # "force" in x direction
+        ay = agent.action.u[:, 1]  # "force" in y direction
+        
+        # Get current heading angle from agent's rotation state
+        theta = agent.state.rot.squeeze(-1)  # Current heading angle
+        
+        # Calculate desired movement direction and magnitude
+        desired_magnitude = torch.sqrt(ax**2 + ay**2 + 1e-8)
+        desired_angle = torch.atan2(ay, ax)  # Desired heading direction
+        
+        # Calculate angle error (difference between desired and current heading)
+        angle_error = desired_angle - theta
+        # Normalize angle error to [-pi, pi]
+        angle_error = torch.atan2(torch.sin(angle_error), torch.cos(angle_error))
+        
+        # Linear velocity: move forward if facing roughly the right direction
+        # Use cosine similarity: positive if within 90 degrees of target direction
+        heading_alignment = torch.cos(angle_error)
+        # v = magnitude * alignment (move forward when aligned, slow down when turning)
+        v = desired_magnitude * torch.clamp(heading_alignment, min=0.0)  # Only move forward when aligned
+        
+        # Angular velocity: proportional to angle error
+        # Kp gain for turning - higher means faster turning
+        Kp_omega = 2.0
+        omega = Kp_omega * angle_error
+        
+        # Scale to velocity limits
+        agent.action.u[:, 0] = v * self.max_linear_velocity
+        agent.action.u[:, 1] = torch.clamp(omega, -1.0, 1.0) * self.max_angular_velocity
         
     def reward(self, agent: Agent):
         is_first = agent == self.world.agents[0]
@@ -365,45 +395,35 @@ class NavigationObsUnicycleScenario(BaseScenario):
                 current_agent.constraint_val = torch.ones(self.world.batch_dim, device=self.world.device)
         
     def agent_reward(self, agent: Agent):
+        """
+        Reward function matching navigation_obs for consistency.
+        Simple and effective: distance shaping + collision penalty.
+        """
         agent.distance_to_goal = torch.linalg.vector_norm(
             agent.state.pos - agent.goal.state.pos,
             dim=-1,
         )
         agent.on_goal = agent.distance_to_goal < agent.goal.shape.radius
 
+        # Standard distance shaping reward (same as navigation_obs)
         pos_shaping = agent.distance_to_goal * self.pos_shaping_factor
         agent.pos_rew = agent.pos_shaping - pos_shaping
         agent.pos_shaping = pos_shaping
-        
-        # Add heading reward: encourage agent to face the goal
-        theta = agent.state.rot.squeeze(-1)
-        goal_dir = agent.goal.state.pos - agent.state.pos
-        goal_angle = torch.atan2(goal_dir[:, 1], goal_dir[:, 0])
-        angle_error = torch.abs(torch.atan2(
-            torch.sin(goal_angle - theta), 
-            torch.cos(goal_angle - theta)
-        ))
-        # Heading bonus: max 0.1 when perfectly aligned, 0 when perpendicular
-        heading_bonus = 0.05 * (1.0 - angle_error / torch.pi) * (1.0 - agent.on_goal.float())
-        agent.pos_rew = agent.pos_rew + heading_bonus
         
         return agent.pos_rew
 
     def observation(self, agent: Agent):
         """
-        Observation includes:
-        - agent position (2D)
-        - agent velocity (2D)  
-        - agent orientation cos(theta), sin(theta) (2D) - for unicycle
-        - goal direction in agent's local frame cos(goal_angle - theta), sin(goal_angle - theta) (2D)
-        - distance to goal (1D)
-        - goal position relative to agent (2D or more if observe_all_goals)
-        - lidar readings (if collisions enabled)
+        Observation space matches navigation_obs structure exactly:
+        - position (2D)
+        - velocity (2D)
+        - goal_pose (2D) - relative position to goal (agent.pos - goal.pos)
+        - lidar (12D if collisions)
         
-        The local goal direction helps the policy directly learn what action to take:
-        - If goal is in front (local_goal_dir ≈ [1, 0]): go forward
-        - If goal is to the left (local_goal_dir ≈ [0, 1]): turn left first
-        - If goal is behind (local_goal_dir ≈ [-1, 0]): turn around
+        Total: 18D (same as navigation_obs)
+        
+        This ensures full compatibility with Safe PINN model which expects
+        [pos, vel, goal_rel, lidar] format with goal_rel at indices 4:6.
         """
         goal_poses = []
         if self.observe_all_goals:
@@ -412,35 +432,14 @@ class NavigationObsUnicycleScenario(BaseScenario):
         else:
             goal_poses.append(agent.state.pos - agent.goal.state.pos)
         
-        # Agent orientation as cos(theta), sin(theta)
-        theta = agent.state.rot.squeeze(-1)
-        orientation = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1)
-        
-        # Goal direction in world frame
-        goal_rel = agent.goal.state.pos - agent.state.pos
-        goal_angle = torch.atan2(goal_rel[:, 1], goal_rel[:, 0])
-        
-        # Goal direction in agent's local frame (very useful for unicycle control)
-        local_goal_angle = goal_angle - theta
-        local_goal_dir = torch.stack([
-            torch.cos(local_goal_angle), 
-            torch.sin(local_goal_angle)
-        ], dim=-1)
-        
-        # Distance to goal (normalized by world size)
-        dist_to_goal = torch.linalg.vector_norm(goal_rel, dim=-1, keepdim=True) / (2 * self.world_spawning_x)
-        
         return torch.cat(
             [
-                agent.state.pos,       # (2,) position
-                agent.state.vel,       # (2,) velocity
-                orientation,           # (2,) cos(theta), sin(theta)
-                local_goal_dir,        # (2,) goal direction in local frame
-                dist_to_goal,          # (1,) normalized distance to goal
+                agent.state.pos,       # (2,) position - indices 0:2
+                agent.state.vel,       # (2,) velocity - indices 2:4
             ]
-            + goal_poses            # (2,) or more - goal relative position
+            + goal_poses            # (2,) goal relative position - indices 4:6
             + (
-                [agent.sensors[0]._max_range - agent.sensors[0].measure()]  # (n_rays,)
+                [agent.sensors[0]._max_range - agent.sensors[0].measure()]  # (12,) lidar - indices 6:18
                 if self.collisions
                 else []
             ),
@@ -525,48 +524,46 @@ class NavigationObsUnicycleScenario(BaseScenario):
 
 
 class HeuristicPolicy(BaseHeuristicPolicy):
-    """Simple proportional controller for unicycle model."""
+    """
+    Simple goal-directed controller that outputs [ax, ay] direction.
     
-    def __init__(self, k_v=1.0, k_omega=2.0, *args, **kwargs):
+    This matches the interface expected by process_action, which converts
+    [ax, ay] to unicycle controls [v, omega].
+    """
+    
+    def __init__(self, gain=1.5, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.k_v = k_v  # Linear velocity gain
-        self.k_omega = k_omega  # Angular velocity gain
+        self.gain = gain  # Gain for direction magnitude
 
     def compute_action(self, observation: Tensor, u_range: Tensor) -> Tensor:
         """
-        Simple proportional controller for unicycle model.
-        Uses local goal direction from observation for direct control.
+        Output [ax, ay] direction towards goal.
         
-        Observation format:
-            [pos(2), vel(2), orientation(2), local_goal_dir(2), dist_to_goal(1), goal_rel(2), ...]
+        process_action will convert this to [v, omega] for unicycle.
         
-        Args:
-            observation: observation tensor
-            u_range: [max_v, max_omega]
+        Observation format (18D):
+            [pos(2), vel(2), goal_rel(2), lidar(12)]
+        
+        goal_rel = agent.pos - goal.pos (points FROM goal TO agent)
+        
+        Returns:
+            action: [ax, ay] - desired movement direction (normalized)
         """
         self.n_env = observation.shape[0]
         self.device = observation.device
         
-        # Local goal direction (already in agent's frame) at index 6:8
-        local_goal_cos = observation[:, 6]  # cos(goal_angle - theta)
-        local_goal_sin = observation[:, 7]  # sin(goal_angle - theta)
+        # Goal relative position at index 4:6 (points from goal to agent)
+        goal_rel = observation[:, 4:6]
         
-        # Normalized distance to goal at index 8
-        dist_normalized = observation[:, 8]
+        # Compute goal direction (where we want to go)
+        goal_dir = -goal_rel  # Direction FROM agent TO goal
         
-        # Angular error is simply atan2(sin, cos) of local goal direction
-        theta_error = torch.atan2(local_goal_sin, local_goal_cos)
+        # Normalize to unit vector and scale by gain
+        dist = torch.linalg.vector_norm(goal_dir, dim=-1, keepdim=True).clamp(min=1e-6)
+        action = self.gain * goal_dir / dist
         
-        # Proportional control
-        # Linear velocity: go forward when facing goal, slow when need to turn
-        v = self.k_v * dist_normalized * torch.cos(theta_error)
-        omega = self.k_omega * theta_error
-        
-        # Clamp to action limits
-        v = torch.clamp(v, -u_range[0], u_range[0])
-        omega = torch.clamp(omega, -u_range[1], u_range[1])
-        
-        action = torch.stack([v, omega], dim=-1)
+        # Clamp to [-1, 1]
+        action = torch.clamp(action, -1.0, 1.0)
         
         return action
 
@@ -591,15 +588,12 @@ if __name__ == "__main__":
     print(f"Number of agents: {len(env.agents)}")
     print(f"Observation shape: {obs[0].shape}")
     print(f"Action space: {env.action_space[0]}")
-    print(f"Observation breakdown:")
+    print(f"Observation breakdown (18D, same as navigation_obs):")
     print(f"  - Position: [0:2]")
     print(f"  - Velocity: [2:4]")
-    print(f"  - Orientation (cos, sin): [4:6]")
-    print(f"  - Local goal direction (cos, sin): [6:8]")
-    print(f"  - Distance to goal (normalized): [8:9]")
-    print(f"  - Goal relative position: [9:11]")
+    print(f"  - Goal relative position: [4:6]")
     if scenario.collisions:
-        print(f"  - Lidar readings: [11:{11+scenario.n_lidar_rays}]")
+        print(f"  - Lidar readings: [6:{6+scenario.n_lidar_rays}]")
     print("=" * 60)
     
     for step in range(200):
@@ -607,9 +601,6 @@ if __name__ == "__main__":
         actions = []
         for i in range(len(env.action_space)):
             # Action space is [-1, 1]^2, will be scaled by max velocities in process_action
-            # But VMAS expects actions in [-1, 1], so we normalize:
-            # v in [- max_linear_velocity, max_linear_velocity] -> [-1, 1]
-            # omega in [-max_angular_velocity, max_angular_velocity] -> [-1, 1]
             v_normalized = torch.rand(env.num_envs, 1) * 2.0 - 1.0  # [-1, 1]
             omega_normalized = torch.rand(env.num_envs, 1) * 2.0 - 1.0  # [-1, 1]
             action = torch.cat([v_normalized, omega_normalized], dim=-1)
@@ -621,17 +612,6 @@ if __name__ == "__main__":
         if step % 50 == 0:
             agent_pos = obs[0][0, :2]
             agent_vel = obs[0][0, 2:4]
-            cos_theta = obs[0][0, 4]
-            sin_theta = obs[0][0, 5]
-            theta = torch.atan2(sin_theta, cos_theta).item()
+            goal_rel = obs[0][0, 4:6]
             print(f"Step {step:3d}: pos=({agent_pos[0]:.3f},{agent_pos[1]:.3f}), " +
-                  f"vel=({agent_vel[0]:.3f},{agent_vel[1]:.3f}), theta={theta:6.3f}rad ({theta*180/3.14159:.1f}°)")
-        
-        if dones.any():
-            print(f"\nEpisode finished at step {step}")
-            print(f"Environments done: {dones.sum().item()}/{env.num_envs}")
-            break
-    
-    print("\n" + "=" * 60)
-    print("Simulation completed successfully!")
-    print("=" * 60)
+                  f"vel=({agent_vel[0]:.3f},{agent_vel[1]:.3f}), goal_rel=({goal_rel[0]:.3f},{goal_rel[1]:.3f})")

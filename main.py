@@ -176,15 +176,16 @@ def build_actor_model_config(
             )
         else:
             # Use original Safe-PINN for MASAC (off-policy) and others
+            # With optimized parameters for better stability and performance
             return SafePinnConfig(
                 num_cells=[64, 64],
                 layer_class=nn.Linear,
                 activation_class=nn.Tanh,
                 scenario_name=scenario,
                 r_communication=r_communication,
-                r_collision=r_collision,
-                barrier_epsilon=barrier_epsilon,
-                f_max=f_max,
+                r_collision=0.2,            # 2x agent_radius for proper collision distance (same as PPO)
+                barrier_epsilon=0.05,       # Larger epsilon for stability
+                f_max=2.0,                  # Lower force saturation for stability
             )
             
     return PinnConfig(
