@@ -97,18 +97,25 @@ class SafePinnPPO(Model):
         self.num_feature_dims = kwargs.pop("num_feature_dims", 1)
         self.scenario_name = kwargs.pop("scenario_name", "grassland_vmas")
         self.r_communication = kwargs.pop("r_communication", 0.45)
-        self.r_collision = kwargs.pop("r_collision", 0.2)  # Default: 2x agent radius
-        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.05)  # Larger epsilon for stability
-        self.f_max = kwargs.pop("f_max", 1.0)  # Lower force saturation for PPO
+        self.r_collision = kwargs.pop("r_collision", 0.15)  # Reduced: more conservative collision distance
+        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.03)  # Smaller epsilon for stronger barrier
+        self.f_max = kwargs.pop("f_max", 1.5)  # Slightly higher for better avoidance response
         
-        # PPO-specific parameters
+        # Lidar-based obstacle avoidance parameters
+        self.use_lidar_barrier = kwargs.pop("use_lidar_barrier", True)  # Use lidar for obstacle avoidance
+        self.lidar_start_idx = kwargs.pop("lidar_start_idx", 6)  # Lidar data starts at index 6
+        self.n_lidar_rays = kwargs.pop("n_lidar_rays", 12)  # Number of lidar rays
+        self.lidar_max_range = kwargs.pop("lidar_max_range", 0.35)  # Max lidar range
+        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.2)  # Weight for obstacle barrier
+        
+        # PPO-specific parameters (increased for better collision avoidance)
         self.task_weight = kwargs.pop("task_weight", 1.0)
-        self.barrier_weight = kwargs.pop("barrier_weight", 0.02)  # Lower base weight for stability
-        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.05)  # Lower max weight
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.08)  # Increased base weight
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.15)  # Increased max weight
         self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Use log barrier by default
-        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 300)  # Longer warmup for stability
-        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 500)  # Later decay start
-        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.3)  # More aggressive final decay
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 200)  # Faster warmup for safety
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 400)  # Earlier decay start
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.5)  # Maintain safety
         
         # Multi-agent scaling parameters
         self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)  # Normalize by neighbor count
@@ -377,9 +384,45 @@ class SafePinnPPO(Model):
             if self.neighbor_normalized_barrier:
                 # Normalize by neighbor count to prevent gradient accumulation
                 H_barrier_per_agent = H_barrier_ij.sum(dim=-1) / neighbor_count.squeeze(-1).clamp(min=1.0)
-                H_barrier_sum = H_barrier_per_agent.sum()
+                H_barrier_agent_sum = H_barrier_per_agent.sum()
             else:
-                H_barrier_sum = H_barrier_ij.sum()
+                H_barrier_agent_sum = H_barrier_ij.sum()
+            
+            # 2b. H_barrier_obstacle (Lidar-based obstacle avoidance)
+            # Lidar data format: lidar_obs = max_range - measured_distance
+            # So lidar_obs close to max_range means obstacle is very close
+            # lidar_obs close to 0 means no obstacle detected
+            H_barrier_obs_sum = torch.tensor(0.0, device=self.device)
+            if self.use_lidar_barrier and self.observation_dim_per_agent > self.lidar_start_idx:
+                lidar_end_idx = min(self.lidar_start_idx + self.n_lidar_rays, self.observation_dim_per_agent)
+                if lidar_end_idx > self.lidar_start_idx:
+                    # Extract lidar data: (batch, n_agents, n_lidar_rays)
+                    lidar_data = state_batch[:, :, self.lidar_start_idx:lidar_end_idx]
+                    
+                    # Convert to actual distances: distance = max_range - lidar_obs
+                    # When obstacle is close: lidar_obs is high, distance is low
+                    obstacle_dist = self.lidar_max_range - lidar_data  # (b, n, n_rays)
+                    
+                    # Clamp distances to avoid numerical issues
+                    obstacle_dist = torch.clamp(obstacle_dist, min=0.01, max=self.lidar_max_range)
+                    
+                    # Barrier potential: high when obstacle is close
+                    # Use log-barrier similar to agent-agent collision
+                    safe_dist = torch.clamp(obstacle_dist - self.r_collision, min=self.barrier_epsilon)
+                    ratio_obs = safe_dist / (self.r_collision + self.barrier_epsilon)
+                    ratio_obs = torch.clamp(ratio_obs, min=0.01, max=10.0)
+                    log_term_obs = torch.log(ratio_obs + 1e-6)
+                    softplus_input_obs = torch.clamp(-log_term_obs, min=-20.0, max=20.0)
+                    
+                    # Apply softplus barrier with higher beta for sharper response
+                    H_barrier_obs_per_ray = torch.nn.functional.softplus(softplus_input_obs, beta=3.0)
+                    
+                    # Sum over all rays and agents, weight by obstacle_barrier_weight
+                    H_barrier_obs_sum = H_barrier_obs_per_ray.sum() * self.obstacle_barrier_weight
+                    H_barrier_obs_sum = torch.clamp(H_barrier_obs_sum, min=0.0, max=50.0)
+            
+            # Total barrier = agent barrier + obstacle barrier
+            H_barrier_sum = H_barrier_agent_sum + H_barrier_obs_sum
             
             # 3. H_kin (Kinetic energy)
             v_batch = state_batch[:, :, 2:4]
@@ -485,10 +528,10 @@ class SafePinnPPO(Model):
 class SafePinnPPOConfig(ModelConfig):
     """Dataclass config for a :class:`~gemsmarl.models.SafePinnPPO`.
     
-    Optimized for on-policy algorithms like MAPPO.
+    Optimized for on-policy algorithms like MAPPO with enhanced collision avoidance.
     
     Barrier Schedule:
-    - [0, warmup_steps]: Linear warmup from 0 to barrier_weight_max
+    - [0, warmup_steps]: Cosine warmup from 0 to barrier_weight_max
     - [warmup_steps, decay_start]: Hold at barrier_weight_max  
     - [decay_start, inf]: Decay to barrier_weight * decay_rate
     
@@ -513,19 +556,26 @@ class SafePinnPPOConfig(ModelConfig):
     scenario_name: str = "navigation_obs"
     r_communication: float = 0.45
     
-    # Safe PINN specific (with PPO-optimized defaults)
-    r_collision: float = 0.2        # 2x agent radius for proper collision distance
-    barrier_epsilon: float = 0.05   # Larger epsilon for smoother gradients
-    f_max: float = 1.0              # Lower force saturation for on-policy stability
+    # Safe PINN specific (optimized for collision avoidance)
+    r_collision: float = 0.15       # Reduced: more conservative collision distance
+    barrier_epsilon: float = 0.03   # Smaller epsilon for stronger barrier near collision
+    f_max: float = 1.5              # Slightly higher for better avoidance response
     
-    # PPO-specific parameters
+    # Lidar-based obstacle avoidance
+    use_lidar_barrier: bool = True    # Use lidar for obstacle avoidance
+    lidar_start_idx: int = 6          # Lidar data starts at index 6 in observation
+    n_lidar_rays: int = 12            # Number of lidar rays
+    lidar_max_range: float = 0.35     # Max lidar range
+    obstacle_barrier_weight: float = 0.2  # Weight for obstacle barrier
+    
+    # PPO-specific parameters (increased for better collision avoidance)
     task_weight: float = 1.0        # Weight on task gradient
-    barrier_weight: float = 0.05    # Final barrier weight after decay
-    barrier_weight_max: float = 0.1 # Maximum barrier weight during plateau
+    barrier_weight: float = 0.08    # Increased base weight
+    barrier_weight_max: float = 0.15 # Increased max weight during plateau
     use_log_barrier: bool = True    # Use log barrier for smoother gradients
-    barrier_warmup_steps: int = 200 # Steps for barrier warmup
-    barrier_decay_start: int = 300  # Start decay after this many steps
-    barrier_decay_rate: float = 0.5 # Decay to this fraction of barrier_weight
+    barrier_warmup_steps: int = 200 # Faster warmup for safety
+    barrier_decay_start: int = 400  # Earlier decay start
+    barrier_decay_rate: float = 0.5 # Maintain safety level
     
     # Multi-agent scaling parameters (for >4 agents)
     neighbor_normalized_barrier: bool = True   # Average barrier instead of sum
