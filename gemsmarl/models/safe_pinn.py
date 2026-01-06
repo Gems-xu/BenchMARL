@@ -30,6 +30,9 @@ class BarrierHead(nn.Module):
         # Input: z_i (hidden) + z_j (hidden)
         self.mlp_k = MLP(2 * hidden_dim, [hidden_dim, 1]).to(device)
         self.softplus = nn.Softplus()
+        
+        # Learnable smoothness parameter
+        self.log_smoothness = nn.Parameter(torch.tensor(0.0, device=device))
 
     def forward(self, x, adj):
         # x: (batch, n_agents, input_dim)
@@ -47,7 +50,16 @@ class BarrierHead(nn.Module):
         z_combined = torch.cat([z_i, z_j], dim=-1) # (b, n, n, 2h)
         
         k_ij_raw = self.mlp_k(z_combined).squeeze(-1) # (b, n, n)
-        k_ij = self.softplus(k_ij_raw)
+        
+        # Clamp raw values to prevent extreme outputs
+        k_ij_raw = torch.clamp(k_ij_raw, min=-5.0, max=2.0)
+        
+        # Apply softplus with learnable smoothness scaling
+        smoothness = self.softplus(self.log_smoothness) + 0.1
+        k_ij = self.softplus(k_ij_raw) * smoothness
+        
+        # Clamp k_ij to prevent numerical instability - VERY LOW for MASAC
+        k_ij = torch.clamp(k_ij, min=0.0, max=1.0)
         
         # Mask with adjacency/interaction range
         k_ij = k_ij * adj
@@ -56,6 +68,11 @@ class BarrierHead(nn.Module):
 
 class SafePinn(Model):
     """Safe Physics-Informed Neural Network (Safe-PINN) model based on Barrier Hamiltonian.
+    
+    Optimized for off-policy algorithms (MASAC) with:
+    - Softer barrier parameters for stable Q-learning
+    - Progressive barrier warmup to allow initial exploration
+    - Balanced task/barrier gradient weighting
     """
 
     def __init__(
@@ -65,9 +82,32 @@ class SafePinn(Model):
         self.num_feature_dims = kwargs.pop("num_feature_dims", 1)
         self.scenario_name = kwargs.pop("scenario_name", "grassland_vmas")
         self.r_communication = kwargs.pop("r_communication", 0.45)
-        self.r_collision = kwargs.pop("r_collision", 0.05) # Default collision radius
-        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 1e-3)
-        self.f_max = kwargs.pop("f_max", 10.0) # Force saturation
+        self.r_collision = kwargs.pop("r_collision", 0.18)  # Slightly conservative collision distance
+        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.08)  # Larger epsilon for smoother gradients
+        self.f_max = kwargs.pop("f_max", 1.0)  # Lower force saturation for stability
+        
+        # Lidar-based obstacle avoidance parameters
+        self.use_lidar_barrier = kwargs.pop("use_lidar_barrier", True)  # Use lidar for obstacle avoidance
+        self.lidar_start_idx = kwargs.pop("lidar_start_idx", 6)  # Lidar data starts at index 6
+        self.n_lidar_rays = kwargs.pop("n_lidar_rays", 12)  # Number of lidar rays
+        self.lidar_max_range = kwargs.pop("lidar_max_range", 0.35)  # Max lidar range
+        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.01)  # Very low weight
+        
+        # Off-policy specific parameters - LOW barrier weights for MASAC
+        self.task_weight = kwargs.pop("task_weight", 1.0)
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.01)  # Low: prioritize goal reaching
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.02)  # Low max weight
+        self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Smoother barrier
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 500)  # Moderate warmup
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 800)  # Moderate decay start
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.3)  # Decay to reduce barrier
+        
+        # Goal attraction strength - same as PPO for stability
+        self.goal_attraction_strength = kwargs.pop("goal_attraction_strength", 10.0)
+        
+        # Multi-agent scaling
+        self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)
+        self.auto_scale_by_agents = kwargs.pop("auto_scale_by_agents", True)
         
         super().__init__(
             input_spec=kwargs.pop("input_spec"),
@@ -97,6 +137,17 @@ class SafePinn(Model):
         self.drag = 0.25
         self.log_std_min = -5
         self.log_std_max = 2
+        
+        # Multi-agent scaling: reduce barrier influence for more agents
+        if self.auto_scale_by_agents and self.n_agents > 4:
+            reference_pairs = 6.0  # 4 agents reference
+            actual_pairs = self.n_agents * (self.n_agents - 1) / 2.0
+            scale_factor = reference_pairs / actual_pairs
+            self.barrier_weight = self.barrier_weight * scale_factor
+            self.barrier_weight_max = self.barrier_weight_max * scale_factor
+        
+        # Track training steps for barrier warmup
+        self.register_buffer('_training_steps', torch.tensor(0, dtype=torch.long))
 
         # Dynamics Heads
         self.R_mean = Att_R(self.observation_dim_per_agent, 16, 8, self.observation_dim_per_agent, self.scenario_name, self.device).to(self.device)
@@ -152,7 +203,38 @@ class SafePinn(Model):
         if not self.input_has_agent_dim:
              raise ValueError("SafePINN model requires input with agent dimension")
 
+    def _get_barrier_weight(self):
+        """Progressive barrier activation with warmup and decay.
+        
+        Schedule (optimized for off-policy with larger replay buffer):
+        1. [0, warmup_steps]: Cosine warmup from 0 to barrier_weight_max
+        2. [warmup_steps, decay_start]: Hold at barrier_weight_max
+        3. [decay_start, inf]: Gradual decay to barrier_weight * decay_rate
+        """
+        steps = self._training_steps.float()
+        
+        if steps < self.barrier_warmup_steps:
+            # Warmup phase: cosine warmup for smoother gradient changes
+            progress = steps / max(1.0, self.barrier_warmup_steps)
+            cosine_progress = 0.5 * (1.0 - torch.cos(progress * 3.14159))
+            return self.barrier_weight_max * cosine_progress
+        elif steps < self.barrier_decay_start:
+            # Plateau phase: hold at max
+            return self.barrier_weight_max
+        else:
+            # Decay phase: gradual cosine decay
+            decay_duration = 1000.0  # Longer decay for off-policy
+            decay_steps = steps - self.barrier_decay_start
+            decay_progress = torch.clamp(decay_steps / decay_duration, max=1.0)
+            cosine_decay = 0.5 * (1.0 + torch.cos(decay_progress * 3.14159))
+            target_weight = self.barrier_weight * self.barrier_decay_rate
+            return target_weight + (self.barrier_weight_max - target_weight) * cosine_decay
+
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
+        # Increment training step counter if training
+        if self.training:
+            self._training_steps += 1
+            
         # Gather in_key and flatten the last self.num_feature_dims dimensions
         # Input shape: (batch, n_agents, obs_dim)
         x = torch.cat(
@@ -216,64 +298,157 @@ class SafePinn(Model):
             dist = torch.sqrt(dist_sq + 1e-6)
             
             # Get stiffness k_ij
-            # Pass state_masked or original state? 
-            # BarrierHead expects (b, n, dim) and adj
             k_ij = self.H_barrier_head(state_batch, laplacian_base) # (b, n, n)
             
-            # Calculate Barrier Potential
-            # B(d_ij) = k_ij / ((d_ij - d_safe)^2 + epsilon)
-            # Only consider neighbors (laplacian_base > 0) and avoid self-loops (dist > 0)
-            # Also usually barrier is only active when d_ij < d_safe? 
-            # The doc says: H_barrier = k_ij / ((d_ij - r_coll)^2)
-            # And "when h(x) -> 0 (collision), H -> inf".
-            # So denominator is distance to collision.
-            # If we define r_coll as collision radius (sum of radii), then d_ij - r_coll is the gap.
-            # We want barrier when gap is small.
-            
+            # Calculate Barrier Potential using softplus-based log barrier (smoother gradients)
             gap = dist - self.r_collision
-            # We might want to only apply barrier if gap is positive (outside collision) but small?
-            # Or just the formula. The formula has singularity at gap=0.
+            # Ensure gap is positive with larger minimum for stability
+            safe_gap = torch.clamp(gap, min=max(self.barrier_epsilon, 0.02))
             
-            # Avoid division by zero and negative gaps (penetration)
-            # If gap < 0, potential should be very high.
-            # Using epsilon in denominator: (gap^2 + eps)
-            
-            denom = (gap**2 + self.barrier_epsilon)
+            # Softplus-based log barrier (smoother than 1/x barrier)
+            ratio = safe_gap / (self.r_collision + self.barrier_epsilon + 1e-6)
+            ratio = torch.clamp(ratio, min=0.01, max=100.0)
+            log_term = torch.log(ratio + 1e-6)
+            softplus_input = torch.clamp(-log_term, min=-20.0, max=20.0)
             
             # Mask: only neighbors (laplacian_base) and not self (eye)
-            mask = laplacian_base * (1 - torch.eye(self.n_agents, device=self.device).unsqueeze(0))
+            eye_mask = torch.eye(self.n_agents, device=self.device).unsqueeze(0)
+            mask = laplacian_base * (1 - eye_mask)
             
-            H_barrier_ij = (k_ij / denom) * mask
-            H_barrier_sum = H_barrier_ij.sum()
+            H_barrier_ij = k_ij * torch.nn.functional.softplus(softplus_input, beta=2.0) * mask
             
-            # 3. H_kin (Kinetic)
-            # H_kin = 0.5 * p^T M^-1 p
-            # Assuming p is velocity, and M=I.
-            # p is usually state[:, :, 2:4] if 2D.
-            # Let's assume state structure [q_x, q_y, v_x, v_y, ...]
+            # Tighter clamp for off-policy stability (prevent extreme Q-values)
+            H_barrier_ij = torch.clamp(H_barrier_ij, min=0.0, max=20.0)
+            H_barrier_ij = torch.nan_to_num(H_barrier_ij, nan=0.0, posinf=20.0, neginf=0.0)
+            
+            # Normalize by neighbor count to prevent gradient accumulation
+            if self.neighbor_normalized_barrier:
+                neighbor_count = mask.sum(dim=-1, keepdim=True).clamp(min=1.0)
+                H_barrier_per_agent = H_barrier_ij.sum(dim=-1) / neighbor_count.squeeze(-1)
+                H_barrier_agent_sum = H_barrier_per_agent.sum()
+            else:
+                H_barrier_agent_sum = H_barrier_ij.sum()
+            
+            # 2b. H_barrier_obstacle (Lidar-based obstacle avoidance)
+            # Lidar data format: lidar_obs = max_range - measured_distance
+            # So lidar_obs close to max_range means obstacle is very close
+            # lidar_obs close to 0 means no obstacle detected
+            H_barrier_obs_sum = torch.tensor(0.0, device=self.device)
+            if self.use_lidar_barrier and self.observation_dim_per_agent > self.lidar_start_idx:
+                lidar_end_idx = min(self.lidar_start_idx + self.n_lidar_rays, self.observation_dim_per_agent)
+                if lidar_end_idx > self.lidar_start_idx:
+                    # Extract lidar data: (batch, n_agents, n_lidar_rays)
+                    lidar_data = state_batch[:, :, self.lidar_start_idx:lidar_end_idx]
+                    
+                    # Convert to actual distances: distance = max_range - lidar_obs
+                    # When obstacle is close: lidar_obs is high, distance is low
+                    obstacle_dist = self.lidar_max_range - lidar_data  # (b, n, n_rays)
+                    
+                    # Clamp distances to avoid numerical issues
+                    obstacle_dist = torch.clamp(obstacle_dist, min=0.01, max=self.lidar_max_range)
+                    
+                    # Barrier potential: high when obstacle is close
+                    # Use log-barrier similar to agent-agent collision
+                    safe_dist = torch.clamp(obstacle_dist - self.r_collision, min=self.barrier_epsilon)
+                    ratio_obs = safe_dist / (self.r_collision + self.barrier_epsilon)
+                    ratio_obs = torch.clamp(ratio_obs, min=0.01, max=10.0)
+                    log_term_obs = torch.log(ratio_obs + 1e-6)
+                    softplus_input_obs = torch.clamp(-log_term_obs, min=-20.0, max=20.0)
+                    
+                    # Apply softplus barrier
+                    H_barrier_obs_per_ray = torch.nn.functional.softplus(softplus_input_obs, beta=3.0)
+                    
+                    # Sum over all rays and agents, weight by obstacle_barrier_weight
+                    H_barrier_obs_sum = H_barrier_obs_per_ray.sum() * self.obstacle_barrier_weight
+                    H_barrier_obs_sum = torch.clamp(H_barrier_obs_sum, min=0.0, max=50.0)
+            
+            # Total barrier = agent barrier + obstacle barrier
+            H_barrier_sum = H_barrier_agent_sum + H_barrier_obs_sum
+            
+            # 3. H_kin (Kinetic energy)
+            # Velocity is at indices 2:4 in observation
             v_batch = state_batch[:, :, 2:4]
             H_kin_sum = 0.5 * torch.sum(v_batch**2)
             
-            # Total Energy
-            H_total = H_task_sum + H_barrier_sum + H_kin_sum
+            # 4. H_goal (Goal attraction potential) - POSITION-BASED potential
+            # 
+            # Observation format (18D): 
+            #   - pos = indices 0:2 (agent position, q)
+            #   - vel = indices 2:4 (velocity, p)
+            #   - goal_offset = indices 4:6 (agent.pos - goal.pos)
+            # 
+            # From goal_offset = pos - goal_pos, we can compute:
+            #   goal_pos = pos - goal_offset
+            #
+            # We want H_goal to be a function of POSITION (q) so that
+            # dH_goal/dq gives us the force direction.
+            #
+            # H_goal(q) = 0.5 * ||q - goal_pos||^2
+            #           = 0.5 * ||goal_offset||^2 (if goal_pos is constant)
+            #
+            # BUT goal_offset in the state is not constant - it changes with q!
+            # So we need to compute H_goal using q directly.
+            #
+            # Since goal_offset = q - goal_pos, and goal_pos is the same for each agent per env:
+            #   goal_pos = q - goal_offset (using current observation values)
+            #
+            # But we need the gradient dH/dq, and goal_pos is constant, so:
+            #   dH/dq = d/dq [0.5 * ||q - goal_pos||^2] = (q - goal_pos) = goal_offset_detached
+            #
+            # The trick: compute goal_pos with detached values, then use q to compute potential
+            q_pos = state_batch[:, :, 0:2]  # Current position (has gradients)
+            goal_offset_obs = state_batch[:, :, 4:6]  # goal_offset from observation
             
-            # Compute Gradients
-            Hgrad = torch.autograd.grad(H_total, state_h_mean, only_inputs=True, create_graph=self.training)
-            dH_mean = Hgrad[0]
+            # Reconstruct goal position (detached - treat as constant)
+            goal_pos = (q_pos - goal_offset_obs).detach()
             
-            # Separate gradients for task and barrier for clipping?
-            # The doc says: u_control = [J - R] ( grad H_task + Clip(grad H_barrier) )
-            # But here we computed grad H_total directly.
-            # To implement clipping, we should compute gradients separately.
+            # Now compute H_goal as function of q_pos
+            goal_diff = q_pos - goal_pos  # This is effectively goal_offset, but now gradient flows through q_pos!
+            dist_to_goal_sq = torch.sum(goal_diff**2, dim=-1)  # (b, n)
             
-            grad_H_task = torch.autograd.grad(H_task_sum + H_kin_sum, state_h_mean, only_inputs=True, retain_graph=True, create_graph=self.training)[0]
-            grad_H_barrier = torch.autograd.grad(H_barrier_sum, state_h_mean, only_inputs=True, create_graph=self.training)[0]
+            # Strong quadratic attractive potential
+            # dH_goal/dq = goal_diff, points AWAY from goal
+            # Force = -dH_goal/dq = -goal_diff, points TOWARDS goal (correct!)
+            H_goal_sum = 0.5 * dist_to_goal_sq.sum() * self.goal_attraction_strength  # Configurable goal attraction
             
-            # Clip barrier gradient
+            # Compute gradients - include explicit goal potential
+            grad_H_task = torch.autograd.grad(
+                H_task_sum + H_kin_sum + H_goal_sum, 
+                state_h_mean, 
+                only_inputs=True, 
+                retain_graph=True, 
+                create_graph=self.training
+            )[0]
+            grad_H_barrier = torch.autograd.grad(
+                H_barrier_sum, 
+                state_h_mean, 
+                only_inputs=True, 
+                create_graph=self.training
+            )[0]
+            
+            # Replace NaN/Inf in gradients for numerical stability
+            grad_H_task = torch.nan_to_num(grad_H_task, nan=0.0, posinf=1.0, neginf=-1.0)
+            grad_H_barrier = torch.nan_to_num(grad_H_barrier, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Gradient clipping for barrier (use smaller f_max for stability)
             grad_H_barrier_clipped = torch.clamp(grad_H_barrier, -self.f_max, self.f_max)
             
-            dH_mean_combined = grad_H_task + grad_H_barrier_clipped
+            # Get current barrier weight (dynamic scheduling)
+            current_barrier_weight = self._get_barrier_weight()
             
+            # Combine: task gradient is primary, barrier is secondary
+            # Use dynamic weight from warmup/decay schedule
+            dH_mean_combined = (
+                self.task_weight * grad_H_task + 
+                current_barrier_weight * grad_H_barrier_clipped
+            )
+            
+            # Moderate safety clamp (allow larger gradients for motion)
+            dH_mean_combined = torch.clamp(dH_mean_combined, min=-10.0, max=10.0)
+            
+        # Extract position and velocity gradients
+        # For Hamiltonian dynamics: dq/dt = dH/dp, dp/dt = -dH/dq
+        # Position is at indices 0:2, velocity is at indices 2:4
         dHq_mean = dH_mean_combined[:, :self.action_dim_per_agent].reshape(-1,
                                                                    self.n_agents * self.action_dim_per_agent)
         dHp_mean = dH_mean_combined[:, self.action_dim_per_agent:2 * self.action_dim_per_agent].reshape(-1,
@@ -309,7 +484,10 @@ class SafePinn(Model):
 
 @dataclass
 class SafePinnConfig(ModelConfig):
-    """Dataclass config for a :class:`~benchmarl.models.SafePinn`."""
+    """Dataclass config for a :class:`~benchmarl.models.SafePinn`.
+    
+    Optimized for off-policy algorithms (MASAC) with balanced goal-reaching and collision avoidance.
+    """
 
     num_cells: Sequence[int] = MISSING
     layer_class: Type[nn.Module] = MISSING
@@ -326,10 +504,33 @@ class SafePinnConfig(ModelConfig):
     scenario_name: str = "navigation_obs"  # vmas
     r_communication: float = 0.45
     
-    # Safe PINN specific
-    r_collision: float = 0.05
-    barrier_epsilon: float = 1e-3
-    f_max: float = 10.0
+    # Safe PINN specific (optimized for MASAC goal-reaching + collision avoidance)
+    r_collision: float = 0.18          # Slightly conservative collision distance
+    barrier_epsilon: float = 0.08      # Larger epsilon for smoother gradients
+    f_max: float = 1.0                 # Lower force saturation for stability
+    
+    # Lidar-based obstacle avoidance
+    use_lidar_barrier: bool = True     # Use lidar for obstacle avoidance
+    lidar_start_idx: int = 6           # Lidar data starts at index 6 in observation
+    n_lidar_rays: int = 12             # Number of lidar rays
+    lidar_max_range: float = 0.35      # Max lidar range
+    obstacle_barrier_weight: float = 0.01  # Very low weight
+    
+    # Barrier weight parameters (LOW for MASAC to prioritize goal-reaching)
+    task_weight: float = 1.0           # Weight on task gradient
+    barrier_weight: float = 0.01       # Low: prioritize goal reaching
+    barrier_weight_max: float = 0.02   # Low max weight during plateau
+    use_log_barrier: bool = True       # Use log barrier for smoother gradients
+    barrier_warmup_steps: int = 500    # Moderate warmup for stability
+    barrier_decay_start: int = 800     # Moderate decay start
+    barrier_decay_rate: float = 0.3    # Decay to reduce barrier
+    
+    # Goal attraction (same as PPO for stability)
+    goal_attraction_strength: float = 10.0  # Standard goal attraction
+    
+    # Multi-agent scaling
+    neighbor_normalized_barrier: bool = True  # Normalize by neighbor count
+    auto_scale_by_agents: bool = True         # Auto-scale params for many agents
 
     @staticmethod
     def associated_class():

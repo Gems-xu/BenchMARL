@@ -176,16 +176,25 @@ def build_actor_model_config(
             )
         else:
             # Use original Safe-PINN for MASAC (off-policy) and others
-            # With optimized parameters for better stability and performance
+            # With optimized parameters matching PPO version for consistency
             return SafePinnConfig(
                 num_cells=[64, 64],
                 layer_class=nn.Linear,
                 activation_class=nn.Tanh,
                 scenario_name=scenario,
                 r_communication=r_communication,
-                r_collision=0.2,            # 2x agent_radius for proper collision distance (same as PPO)
-                barrier_epsilon=0.05,       # Larger epsilon for stability
-                f_max=2.0,                  # Lower force saturation for stability
+                r_collision=0.2,              # 2x agent_radius for proper collision distance
+                barrier_epsilon=0.05,         # Larger epsilon for smoother gradients
+                f_max=2.0,                    # Lower force saturation for stability
+                task_weight=1.0,              # Keep task gradient strong
+                barrier_weight=0.05,          # Final barrier weight after decay
+                barrier_weight_max=0.1,       # Maximum barrier weight during plateau
+                use_log_barrier=True,         # Log barrier has smoother gradient profile
+                barrier_warmup_steps=500,     # Longer warmup for off-policy (larger replay buffer)
+                barrier_decay_start=1000,     # Later decay start for off-policy
+                barrier_decay_rate=0.5,       # Decay to 50% of barrier_weight
+                neighbor_normalized_barrier=True,  # Average barrier instead of sum
+                auto_scale_by_agents=True,    # Auto-reduce params for many agents
             )
             
     return PinnConfig(
