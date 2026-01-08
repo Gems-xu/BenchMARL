@@ -82,28 +82,28 @@ class SafePinn(Model):
         self.num_feature_dims = kwargs.pop("num_feature_dims", 1)
         self.scenario_name = kwargs.pop("scenario_name", "grassland_vmas")
         self.r_communication = kwargs.pop("r_communication", 0.45)
-        self.r_collision = kwargs.pop("r_collision", 0.18)  # Slightly conservative collision distance
-        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.08)  # Larger epsilon for smoother gradients
-        self.f_max = kwargs.pop("f_max", 1.0)  # Lower force saturation for stability
+        self.r_collision = kwargs.pop("r_collision", 0.2)  # 2x agent_radius for proper collision distance
+        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.05)  # Larger epsilon for smoother gradients
+        self.f_max = kwargs.pop("f_max", 3.0)  # Increased force saturation for stronger avoidance
         
         # Lidar-based obstacle avoidance parameters
         self.use_lidar_barrier = kwargs.pop("use_lidar_barrier", True)  # Use lidar for obstacle avoidance
         self.lidar_start_idx = kwargs.pop("lidar_start_idx", 6)  # Lidar data starts at index 6
         self.n_lidar_rays = kwargs.pop("n_lidar_rays", 12)  # Number of lidar rays
         self.lidar_max_range = kwargs.pop("lidar_max_range", 0.35)  # Max lidar range
-        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.01)  # Very low weight
+        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.3)  # Strong obstacle avoidance
         
-        # Off-policy specific parameters - LOW barrier weights for MASAC
+        # Off-policy specific parameters - BALANCED barrier weights for MASAC
         self.task_weight = kwargs.pop("task_weight", 1.0)
-        self.barrier_weight = kwargs.pop("barrier_weight", 0.01)  # Low: prioritize goal reaching
-        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.02)  # Low max weight
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.15)  # Balanced: effective collision avoidance
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.3)  # Higher max weight for strong initial avoidance
         self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Smoother barrier
-        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 500)  # Moderate warmup
-        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 800)  # Moderate decay start
-        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.3)  # Decay to reduce barrier
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 200)  # Faster warmup for quick collision avoidance
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 500)  # Earlier decay to maintain goal-reaching
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.6)  # Maintain higher barrier throughout training
         
-        # Goal attraction strength - same as PPO for stability
-        self.goal_attraction_strength = kwargs.pop("goal_attraction_strength", 10.0)
+        # Goal attraction strength - balanced with barrier for better performance
+        self.goal_attraction_strength = kwargs.pop("goal_attraction_strength", 3.0)
         
         # Multi-agent scaling
         self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)
@@ -507,26 +507,26 @@ class SafePinnConfig(ModelConfig):
     # Safe PINN specific (optimized for MASAC goal-reaching + collision avoidance)
     r_collision: float = 0.18          # Slightly conservative collision distance
     barrier_epsilon: float = 0.08      # Larger epsilon for smoother gradients
-    f_max: float = 1.0                 # Lower force saturation for stability
+    f_max: float = 3.0                 # Increased force saturation for stronger avoidance
     
     # Lidar-based obstacle avoidance
     use_lidar_barrier: bool = True     # Use lidar for obstacle avoidance
     lidar_start_idx: int = 6           # Lidar data starts at index 6 in observation
     n_lidar_rays: int = 12             # Number of lidar rays
     lidar_max_range: float = 0.35      # Max lidar range
-    obstacle_barrier_weight: float = 0.01  # Very low weight
+    obstacle_barrier_weight: float = 0.3  # Strong obstacle avoidance weight
     
-    # Barrier weight parameters (LOW for MASAC to prioritize goal-reaching)
+    # Barrier weight parameters (BALANCED for MASAC - effective collision avoidance + goal-reaching)
     task_weight: float = 1.0           # Weight on task gradient
-    barrier_weight: float = 0.01       # Low: prioritize goal reaching
-    barrier_weight_max: float = 0.02   # Low max weight during plateau
+    barrier_weight: float = 0.15       # Balanced: effective collision avoidance
+    barrier_weight_max: float = 0.3    # Higher max weight for strong initial avoidance
     use_log_barrier: bool = True       # Use log barrier for smoother gradients
-    barrier_warmup_steps: int = 500    # Moderate warmup for stability
-    barrier_decay_start: int = 800     # Moderate decay start
-    barrier_decay_rate: float = 0.3    # Decay to reduce barrier
+    barrier_warmup_steps: int = 200    # Faster warmup for quick collision avoidance learning
+    barrier_decay_start: int = 500     # Earlier decay to maintain goal-reaching ability
+    barrier_decay_rate: float = 0.6    # Maintain higher barrier throughout training
     
-    # Goal attraction (same as PPO for stability)
-    goal_attraction_strength: float = 10.0  # Standard goal attraction
+    # Goal attraction (lower for better balance with barrier)
+    goal_attraction_strength: float = 3.0  # Balanced goal attraction
     
     # Multi-agent scaling
     neighbor_normalized_barrier: bool = True  # Normalize by neighbor count

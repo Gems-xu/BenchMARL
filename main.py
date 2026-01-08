@@ -176,7 +176,7 @@ def build_actor_model_config(
             )
         else:
             # Use original Safe-PINN for MASAC (off-policy) and others
-            # With optimized parameters matching PPO version for consistency
+            # OPTIMIZED: Higher barrier weights for effective collision avoidance
             return SafePinnConfig(
                 num_cells=[64, 64],
                 layer_class=nn.Linear,
@@ -185,16 +185,20 @@ def build_actor_model_config(
                 r_communication=r_communication,
                 r_collision=0.2,              # 2x agent_radius for proper collision distance
                 barrier_epsilon=0.05,         # Larger epsilon for smoother gradients
-                f_max=2.0,                    # Lower force saturation for stability
+                f_max=3.0,                    # Increased force saturation for stronger avoidance
                 task_weight=1.0,              # Keep task gradient strong
-                barrier_weight=0.05,          # Final barrier weight after decay
-                barrier_weight_max=0.1,       # Maximum barrier weight during plateau
+                barrier_weight=0.15,          # INCREASED: Final barrier weight (0.05→0.15)
+                barrier_weight_max=0.3,       # INCREASED: Maximum barrier weight (0.1→0.3)
                 use_log_barrier=True,         # Log barrier has smoother gradient profile
-                barrier_warmup_steps=500,     # Longer warmup for off-policy (larger replay buffer)
-                barrier_decay_start=1000,     # Later decay start for off-policy
-                barrier_decay_rate=0.5,       # Decay to 50% of barrier_weight
+                barrier_warmup_steps=200,     # REDUCED: Faster warmup for quick collision avoidance
+                barrier_decay_start=500,      # REDUCED: Earlier decay to maintain goal-reaching
+                barrier_decay_rate=0.6,       # INCREASED: Maintain higher barrier throughout training
                 neighbor_normalized_barrier=True,  # Average barrier instead of sum
                 auto_scale_by_agents=True,    # Auto-reduce params for many agents
+                # Goal attraction parameters
+                goal_attraction_strength=3.0, # REDUCED: Lower goal attraction (10.0→3.0) for better balance
+                # Obstacle avoidance parameters
+                obstacle_barrier_weight=0.3,  # GREATLY INCREASED: Strong obstacle avoidance (0.01→0.3)
             )
             
     return PinnConfig(

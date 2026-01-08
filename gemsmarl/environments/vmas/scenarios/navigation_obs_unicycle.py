@@ -71,9 +71,9 @@ class NavigationObsUnicycleScenario(BaseScenario):
 
         self.shared_rew = kwargs.pop("shared_rew", True)
         self.pos_shaping_factor = kwargs.pop("pos_shaping_factor", 1)
-        self.final_reward = kwargs.pop("final_reward", 0.01)
+        self.final_reward = kwargs.pop("final_reward", 0.2)  # 提高完成奖励，让成功更有价值
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -1)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.05)  # 大幅降低碰撞惩罚
         
         # Obstacle parameters
         self.n_obstacles = kwargs.pop("n_obstacles", 3)
