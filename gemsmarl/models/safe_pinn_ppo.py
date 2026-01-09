@@ -97,25 +97,25 @@ class SafePinnPPO(Model):
         self.num_feature_dims = kwargs.pop("num_feature_dims", 1)
         self.scenario_name = kwargs.pop("scenario_name", "grassland_vmas")
         self.r_communication = kwargs.pop("r_communication", 0.45)
-        self.r_collision = kwargs.pop("r_collision", 0.15)  # Reduced: more conservative collision distance
-        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.03)  # Smaller epsilon for stronger barrier
-        self.f_max = kwargs.pop("f_max", 1.5)  # Slightly higher for better avoidance response
+        self.r_collision = kwargs.pop("r_collision", 0.16)  # 微调到0.16，避免过早触发(原0.15)
+        self.barrier_epsilon = kwargs.pop("barrier_epsilon", 0.04)  # 微调到0.04，平滑但不过度(原0.03)
+        self.f_max = kwargs.pop("f_max", 1.3)  # 适度降低到1.3，保持温和避障(原1.5)
         
-        # Lidar-based obstacle avoidance parameters
+        # Lidar-based obstacle avoidance parameters (增强障碍物感知)
         self.use_lidar_barrier = kwargs.pop("use_lidar_barrier", True)  # Use lidar for obstacle avoidance
         self.lidar_start_idx = kwargs.pop("lidar_start_idx", 6)  # Lidar data starts at index 6
         self.n_lidar_rays = kwargs.pop("n_lidar_rays", 12)  # Number of lidar rays
         self.lidar_max_range = kwargs.pop("lidar_max_range", 0.35)  # Max lidar range
-        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.2)  # Weight for obstacle barrier
+        self.obstacle_barrier_weight = kwargs.pop("obstacle_barrier_weight", 0.28)  # 适度提高到0.28(原0.2)
         
-        # PPO-specific parameters (increased for better collision avoidance)
-        self.task_weight = kwargs.pop("task_weight", 1.0)
-        self.barrier_weight = kwargs.pop("barrier_weight", 0.08)  # Increased base weight
-        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.15)  # Increased max weight
+        # PPO-specific parameters (保守微调，确保目标导向)
+        self.task_weight = kwargs.pop("task_weight", 1.2)  # 提高到1.2，增强目标吸引力
+        self.barrier_weight = kwargs.pop("barrier_weight", 0.10)  # 微调到0.10(原0.08)
+        self.barrier_weight_max = kwargs.pop("barrier_weight_max", 0.18)  # 微调到0.18(原0.15)
         self.use_log_barrier = kwargs.pop("use_log_barrier", True)  # Use log barrier by default
-        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 200)  # Faster warmup for safety
-        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 400)  # Earlier decay start
-        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.5)  # Maintain safety
+        self.barrier_warmup_steps = kwargs.pop("barrier_warmup_steps", 180)  # 接近原始200
+        self.barrier_decay_start = kwargs.pop("barrier_decay_start", 450)  # 接近原始400
+        self.barrier_decay_rate = kwargs.pop("barrier_decay_rate", 0.55)  # 接近原始0.5
         
         # Multi-agent scaling parameters
         self.neighbor_normalized_barrier = kwargs.pop("neighbor_normalized_barrier", True)  # Normalize by neighbor count
@@ -483,12 +483,29 @@ class SafePinnPPO(Model):
             # Get current barrier weight (may be ramping up during warmup or decaying)
             current_barrier_weight = self._get_barrier_weight()
             
-            # Combine: task is primary, barrier is secondary with fixed small weight
-            # Avoid complex adaptive weighting that may suppress motion
-            dH_mean_combined = (
-                self.task_weight * grad_H_task_kin + 
-                current_barrier_weight * grad_H_barrier_clipped
+            # Combine gradients with CORRECT SIGN for Hamiltonian dynamics
+            # For position (q): Force = -dH/dq (negative gradient to attract to goal)
+            # For momentum (p): dH/dp is directly used
+            # Split gradients into position and momentum parts
+            grad_H_q = grad_H_task_kin[:, :self.action_dim_per_agent]  # Position gradients
+            grad_H_p = grad_H_task_kin[:, self.action_dim_per_agent:2*self.action_dim_per_agent]  # Momentum gradients
+            
+            grad_barrier_q = grad_H_barrier_clipped[:, :self.action_dim_per_agent]
+            grad_barrier_p = grad_H_barrier_clipped[:, self.action_dim_per_agent:2*self.action_dim_per_agent]
+            
+            # Apply NEGATIVE sign to position gradients (force points opposite to gradient)
+            # Keep momentum gradients as-is
+            dH_q_combined = (
+                -self.task_weight * grad_H_q +  # NEGATIVE for attraction
+                current_barrier_weight * grad_barrier_q  # Positive for repulsion
             )
+            dH_p_combined = (
+                self.task_weight * grad_H_p + 
+                current_barrier_weight * grad_barrier_p
+            )
+            
+            # Concatenate back
+            dH_mean_combined = torch.cat([dH_q_combined, dH_p_combined], dim=-1)
             
             # Moderate safety clamp (allow larger gradients for motion)
             dH_mean_combined = torch.clamp(dH_mean_combined, min=-10.0, max=10.0)
@@ -556,26 +573,26 @@ class SafePinnPPOConfig(ModelConfig):
     scenario_name: str = "navigation_obs"
     r_communication: float = 0.45
     
-    # Safe PINN specific (optimized for collision avoidance)
-    r_collision: float = 0.15       # Reduced: more conservative collision distance
-    barrier_epsilon: float = 0.03   # Smaller epsilon for stronger barrier near collision
-    f_max: float = 1.5              # Slightly higher for better avoidance response
+    # Safe PINN specific (保守微调策略)
+    r_collision: float = 0.16       # 微调避障距离 (0.15→0.16)
+    barrier_epsilon: float = 0.04   # 微调平滑度 (0.03→0.04)
+    f_max: float = 1.3              # 适度降低最大力 (1.5→1.3)
     
-    # Lidar-based obstacle avoidance
+    # Lidar-based obstacle avoidance (增强障碍物感知)
     use_lidar_barrier: bool = True    # Use lidar for obstacle avoidance
     lidar_start_idx: int = 6          # Lidar data starts at index 6 in observation
     n_lidar_rays: int = 12            # Number of lidar rays
     lidar_max_range: float = 0.35     # Max lidar range
-    obstacle_barrier_weight: float = 0.2  # Weight for obstacle barrier
+    obstacle_barrier_weight: float = 0.28  # 适度提高 (0.2→0.28)
     
-    # PPO-specific parameters (increased for better collision avoidance)
-    task_weight: float = 1.0        # Weight on task gradient
-    barrier_weight: float = 0.08    # Increased base weight
-    barrier_weight_max: float = 0.15 # Increased max weight during plateau
+    # PPO-specific parameters (保守微调，确保目标导向)
+    task_weight: float = 1.2        # 提高目标吸引力 (1.0→1.2)
+    barrier_weight: float = 0.10    # 微调 (0.08→0.10)
+    barrier_weight_max: float = 0.18 # 微调 (0.15→0.18)
     use_log_barrier: bool = True    # Use log barrier for smoother gradients
-    barrier_warmup_steps: int = 200 # Faster warmup for safety
-    barrier_decay_start: int = 400  # Earlier decay start
-    barrier_decay_rate: float = 0.5 # Maintain safety level
+    barrier_warmup_steps: int = 180 # 接近原始 (200→180)
+    barrier_decay_start: int = 450  # 接近原始 (400→450)
+    barrier_decay_rate: float = 0.55 # 接近原始 (0.5→0.55)
     
     # Multi-agent scaling parameters (for >4 agents)
     neighbor_normalized_barrier: bool = True   # Average barrier instead of sum
