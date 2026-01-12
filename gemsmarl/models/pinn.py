@@ -194,8 +194,11 @@ class Att_R(nn.Module):
 
         batch = int(x.shape[0] / x.shape[2])
 
-        j12 = x.sum(1).sum(1).reshape(batch, self.na)
-        j21 = -j12
+        j12_raw = x.sum(1).sum(1).reshape(batch, self.na)
+        # Fix: Use absolute value to ensure j12 is always positive (standard Hamiltonian structure)
+        # This ensures correct force direction: dp/dt = -j12 * ∇H_q
+        j12 = torch.abs(j12_raw) + 0.01  # Add small offset to prevent zero
+        j21 = -j12  # Keep antisymmetric structure
         
         # Optimized matrix construction using diag_embed
         J12 = torch.diag_embed(j12)
@@ -281,8 +284,11 @@ class Att_J(nn.Module):
 
         batch = x.shape[0] // x.shape[2]
 
-        j12 = x.sum(1).sum(1).reshape(batch, self.na)
-        j21 = -j12
+        j12_raw = x.sum(1).sum(1).reshape(batch, self.na)
+        # Fix: Use absolute value to ensure j12 is always positive (standard Hamiltonian structure)
+        # This ensures correct force direction: dp/dt = -j12 * ∇H_q
+        j12 = torch.abs(j12_raw) + 0.01  # Add small offset to prevent zero
+        j21 = -j12  # Keep antisymmetric structure
         
         # Optimized matrix construction using diag_embed
         J12 = torch.diag_embed(j12)
