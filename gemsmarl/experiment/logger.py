@@ -267,6 +267,36 @@ class Logger:
 
                     logger.log_video("eval_video", vid, step=step)
 
+    def log_safety_metrics(
+        self,
+        safety_metrics: Dict[str, float],
+        step: int,
+    ):
+        """Log safety metrics to wandb with Safe module prefix.
+        
+        This method logs comprehensive safety metrics collected from the environment
+        to wandb, organizing them under the 'Safe/' prefix for better visualization.
+        
+        Args:
+            safety_metrics (Dict[str, float]): Dictionary containing safety metrics like:
+                - safety/agent_collision_rew_mean: Average collision penalty
+                - safety/agent_collision_rew_min: Minimum collision penalty
+                - safety/agent_collision_rew_max: Maximum collision penalty
+                - safety/collision_rate: Percentage of collision events
+                - safety/constraint_value_mean: Average constraint satisfaction
+                - safety/constraint_satisfaction_rate: Percentage of constraint satisfaction
+            step (int): Training/evaluation step for logging
+        """
+        if not len(self.loggers) or not safety_metrics:
+            return
+        
+        to_log = {}
+        for key, value in safety_metrics.items():
+            # Add Safe/ prefix for wandb organization
+            to_log[f"Safe/{key}"] = value
+        
+        self.log(to_log, step=step)
+
     def log_potential_field(
         self,
         potential_image: np.ndarray,

@@ -37,6 +37,7 @@ from gemsmarl.algorithms.common import AlgorithmConfig
 from gemsmarl.environments import Task, TaskClass
 from gemsmarl.experiment.callback import Callback, CallbackNotifier
 from gemsmarl.experiment.logger import Logger
+from gemsmarl.experiment.safety_metrics_callback import SafetyMetricsCallback
 from gemsmarl.models import GnnConfig, SequenceModelConfig
 from gemsmarl.models.common import ModelConfig
 from gemsmarl.experiment.potential_visualizer import (
@@ -374,6 +375,9 @@ class Experiment(CallbackNotifier):
         self.algorithm_config = algorithm_config
         self.seed = seed
 
+        # Add SafetyMetricsCallback if not already present
+        self._add_safety_metrics_callback()
+
         self._setup()
 
         self.total_time = 0
@@ -388,6 +392,18 @@ class Experiment(CallbackNotifier):
     def on_policy(self) -> bool:
         """Whether the algorithm has to be run on policy."""
         return self.algorithm_config.on_policy()
+
+    def _add_safety_metrics_callback(self):
+        """Add SafetyMetricsCallback if not already present."""
+        # Check if SafetyMetricsCallback is already in the callbacks
+        has_safety_metrics = any(
+            isinstance(cb, SafetyMetricsCallback) for cb in self.callbacks
+        )
+        
+        if not has_safety_metrics:
+            # Add SafetyMetricsCallback for navigation scenarios
+            if self.task is not None and 'navigation' in self.task.name.lower():
+                self.callbacks.append(SafetyMetricsCallback(evaluate_only=True))
 
     def _setup(self):
         self.config.validate(self.on_policy)
@@ -1010,6 +1026,19 @@ class Experiment(CallbackNotifier):
             step=self.n_iters_performed,
             total_frames=self.total_frames,
         )
+        
+        # Log safety metrics from SafetyMetricsCallback
+        try:
+            for callback in self.callbacks:
+                if isinstance(callback, SafetyMetricsCallback):
+                    safety_metrics = callback.get_last_evaluation_metrics()
+                    if safety_metrics:
+                        self.logger.log_safety_metrics(
+                            safety_metrics, 
+                            step=self.n_iters_performed
+                        )
+        except Exception as e:
+            warnings.warn(f"Could not log safety metrics: {e}")
         
         # Log potential field visualization if available
         if potential_visualizer is not None and safe_pinn_model is not None and len(combined_viz_frames) > 0:

@@ -461,12 +461,46 @@ class NavigationObsUnicycleScenario(BaseScenario):
         ).all(-1)
 
     def info(self, agent: Agent):
+        """Return information about agent state including safety metrics.
+        
+        Returns:
+            Dictionary with keys:
+            - constraints: constraint value for the agent
+            - agent_collision_rew: collision reward accumulated for this agent
+            - min_collision_distance: minimum distance to obstacles/other agents
+            - distance_to_goal: current distance to goal
+            - on_goal: whether agent is at goal
+        """
         if agent in self.world.policy_agents:
             agent_constraint = agent.constraint_val
         else:
             agent_constraint = torch.zeros(self.world.batch_dim, device=self.world.device)
         
-        return {"constraints": agent_constraint}
+        # Calculate minimum distance to obstacles and other agents
+        min_distances = []
+        
+        # Distance to other agents
+        for other_agent in self.world.agents:
+            if other_agent != agent:
+                min_distances.append(self.world.get_distance(agent, other_agent))
+        
+        # Distance to obstacles
+        for landmark in self.world.landmarks:
+            if landmark.collide:  # Only consider collidable landmarks (obstacles)
+                min_distances.append(self.world.get_distance(agent, landmark))
+        
+        if len(min_distances) > 0:
+            min_dist = torch.min(torch.stack(min_distances, dim=0), dim=0).values
+        else:
+            min_dist = torch.ones(self.world.batch_dim, device=self.world.device) * 999
+        
+        return {
+            "constraints": agent_constraint,
+            "agent_collision_rew": agent.agent_collision_rew,
+            "min_collision_distance": min_dist,
+            "distance_to_goal": agent.distance_to_goal if hasattr(agent, 'distance_to_goal') else torch.zeros(self.world.batch_dim, device=self.world.device),
+            "on_goal": agent.on_goal.float() if hasattr(agent, 'on_goal') else torch.zeros(self.world.batch_dim, device=self.world.device),
+        }
 
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         from vmas.simulator import rendering
