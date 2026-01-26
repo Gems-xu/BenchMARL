@@ -52,14 +52,10 @@ def parse_args() -> argparse.Namespace:
         help="Disable wandb logging (enabled by default)",
     )
     parser.add_argument(
-        "--use-safe-pinn",
-        action="store_true",
-        help="Force Safe-PINN actor (defaults to True for both algorithms)",
-    )
-    parser.add_argument(
-        "--no-safe-pinn",
-        action="store_true",
-        help="Force standard PINN actor",
+        "--actor",
+        choices=["mlp", "pinn", "safe_pinn"],
+        default="safe_pinn",
+        help="Actor network type: mlp (standard MLP), pinn (Physics-Informed NN), or safe_pinn (Safe-PINN with barriers)",
     )
     parser.add_argument(
         "--r-communication",
@@ -143,13 +139,31 @@ def build_task(env: EnvironmentName, scenario: str):
 def build_actor_model_config(
     scenario: str,
     algorithm: AlgorithmName,
-    use_safe_pinn: bool,
+    actor_type: str,
     r_communication: float,
     r_collision: float,
     barrier_epsilon: float,
     f_max: float,
 ):
-    if use_safe_pinn:
+    if actor_type == "mlp":
+        # Standard MLP actor network
+        return MlpConfig(
+            num_cells=[64, 64],
+            layer_class=nn.Linear,
+            activation_class=nn.Tanh,
+        )
+    
+    if actor_type == "pinn":
+        # Physics-Informed Neural Network without safety barriers
+        return PinnConfig(
+            num_cells=[64, 64],
+            layer_class=nn.Linear,
+            activation_class=nn.Tanh,
+            scenario_name=scenario,
+            r_communication=r_communication,
+        )
+    
+    if actor_type == "safe_pinn":
         if algorithm == "mappo":
             # Use PPO-optimized Safe-PINN for MAPPO
             # Includes multi-agent scaling for >4 agents
@@ -200,14 +214,8 @@ def build_actor_model_config(
                 # Obstacle avoidance parameters
                 obstacle_barrier_weight=0.3,  # GREATLY INCREASED: Strong obstacle avoidance (0.01→0.3)
             )
-            
-    return PinnConfig(
-        num_cells=[64, 64],
-        layer_class=nn.Linear,
-        activation_class=nn.Tanh,
-        scenario_name=scenario,
-        r_communication=r_communication,
-    )
+    
+    raise ValueError(f"Unsupported actor type: {actor_type}")
 
 
 def build_critic_model_config():
@@ -253,17 +261,12 @@ def main():
     # Default scenarios if not provided
     default_scenarios = {"vmas": "navigation_obs_unicycle", "pettingzoo": "simple_tag"}
     scenario = args.scenario or default_scenarios[args.env]
-    use_safe_pinn = True
-    if args.no_safe_pinn:
-        use_safe_pinn = False
-    elif args.use_safe_pinn:
-        use_safe_pinn = True
 
     algorithm_config = build_algorithm_config(args.algorithm)
     actor_model_config = build_actor_model_config(
         scenario=scenario,
         algorithm=args.algorithm,
-        use_safe_pinn=use_safe_pinn,
+        actor_type=args.actor,
         r_communication=args.r_communication,
         r_collision=args.r_collision,
         barrier_epsilon=args.barrier_epsilon,
